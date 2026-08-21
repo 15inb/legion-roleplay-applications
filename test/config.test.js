@@ -27,9 +27,10 @@ test('ConfigService persists validated Discord-side edits', async () => {
   const file = path.join(directory, 'applications.json');
   const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
   config.reviewerRoleIds = ['123456789012345678'];
+  config.applicationCategoryId = '123456789012345678';
+  config.transcriptChannelId = '123456789012345678';
   for (const position of config.positions) {
     position.roleId = '123456789012345678';
-    position.reviewChannelId = '123456789012345678';
   }
   await writeFile(file, JSON.stringify(config), 'utf8');
   const service = new ConfigService(file);

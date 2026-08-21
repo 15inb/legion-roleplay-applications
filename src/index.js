@@ -1,8 +1,9 @@
 import 'dotenv/config';
-import { ActivityType, Client, GatewayIntentBits, PermissionFlagsBits, REST, Routes } from 'discord.js';
+import { ActivityType, Client, GatewayIntentBits, Partials, PermissionFlagsBits, REST, Routes } from 'discord.js';
 import { attachBotHandlers } from './bot.js';
 import { commands } from './commands.js';
 import { ConfigService } from './config.js';
+import { attachReactionRoleHandlers, ReactionRoleStore } from './reaction-roles.js';
 import { ApplicationStore } from './store.js';
 
 const requiredEnvironment = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID'];
@@ -19,8 +20,18 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID), { body: commands });
 console.log(`Registered ${commands.length} commands in guild ${process.env.DISCORD_GUILD_ID}.`);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-attachBotHandlers(client, { configService, store: new ApplicationStore() });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
+});
+const reactionRoleStore = new ReactionRoleStore();
+attachBotHandlers(client, { configService, store: new ApplicationStore(), reactionRoleStore });
+attachReactionRoleHandlers(client, reactionRoleStore);
 
 client.once('clientReady', (readyClient) => {
   readyClient.user.setActivity(process.env.BOT_ACTIVITY || 'Roleplay Applications', { type: ActivityType.Watching });
@@ -29,6 +40,9 @@ client.once('clientReady', (readyClient) => {
     | PermissionFlagsBits.EmbedLinks
     | PermissionFlagsBits.AttachFiles
     | PermissionFlagsBits.ReadMessageHistory
+    | PermissionFlagsBits.AddReactions
+    | PermissionFlagsBits.ManageChannels
+    | PermissionFlagsBits.ManageMessages
     | PermissionFlagsBits.ManageRoles;
   const invite = `https://discord.com/oauth2/authorize?client_id=${process.env.DISCORD_CLIENT_ID}&permissions=${permissions}&scope=bot%20applications.commands`;
   console.log(`Logged in as ${readyClient.user.tag}.`);

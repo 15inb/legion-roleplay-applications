@@ -2,6 +2,8 @@
   "reviewerRoleIds": [
     "PUT_STAFF_ROLE_ID_HERE"
   ],
+  "applicationCategoryId": "PUT_APPLICATION_CATEGORY_ID_HERE",
+  "transcriptChannelId": "PUT_TRANSCRIPT_CHANNEL_ID_HERE",
   "allowMultiplePendingApplications": false,
   "panel": {
     "title": "Legionnaire Application",
@@ -14,7 +16,6 @@
       "name": "Legionnaire Application",
       "description": "Apply to join the Imperial Legion.",
       "roleId": "PUT_LEGIONNAIRE_ROLE_ID_HERE",
-      "reviewChannelId": "PUT_REVIEW_CHANNEL_ID_HERE",
       "questions": [
         {
           "id": "join-reason",

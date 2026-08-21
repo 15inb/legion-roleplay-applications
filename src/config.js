@@ -14,6 +14,9 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
   assert(Array.isArray(config.reviewerRoleIds), 'reviewerRoleIds must be an array');
   assert(config.reviewerRoleIds.length > 0, 'at least one reviewer role is required');
   assert(config.reviewerRoleIds.length <= 10, 'at most 10 reviewer roles are supported');
+  for (const field of ['applicationCategoryId', 'transcriptChannelId']) {
+    assert(typeof config[field] === 'string' && SNOWFLAKE_OR_PLACEHOLDER.test(config[field]), `${field} must be a Discord ID`);
+  }
   assert(config.panel && typeof config.panel === 'object', 'panel is required');
   assert(typeof config.panel.title === 'string' && config.panel.title.length <= 256, 'panel.title must be 256 characters or fewer');
   assert(typeof config.panel.description === 'string' && config.panel.description.length <= 4000, 'panel.description must be 4000 characters or fewer');
@@ -30,7 +33,7 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
     positionIds.add(position.id);
     assert(typeof position.name === 'string' && position.name.length >= 1 && position.name.length <= 100, `${prefix}.name must be 1-100 characters`);
     assert(typeof position.description === 'string' && position.description.length <= 100, `${prefix}.description must be 100 characters or fewer`);
-    for (const field of ['roleId', 'reviewChannelId']) {
+    for (const field of ['roleId']) {
       assert(typeof position[field] === 'string' && SNOWFLAKE_OR_PLACEHOLDER.test(position[field]), `${prefix}.${field} must be a Discord ID`);
       if (position[field].startsWith('PUT_')) placeholders.push(`${prefix}.${field}`);
     }
@@ -56,6 +59,9 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
   for (const [index, roleId] of config.reviewerRoleIds.entries()) {
     assert(typeof roleId === 'string' && SNOWFLAKE_OR_PLACEHOLDER.test(roleId), `reviewerRoleIds[${index}] must be a Discord role ID`);
     if (roleId.startsWith('PUT_')) placeholders.push(`reviewerRoleIds[${index}]`);
+  }
+  for (const field of ['applicationCategoryId', 'transcriptChannelId']) {
+    if (config[field].startsWith('PUT_')) placeholders.push(field);
   }
   if (!allowPlaceholders) assert(placeholders.length === 0, `replace placeholder values: ${placeholders.join(', ')}`);
   return config;
@@ -85,11 +91,17 @@ export class ConfigService {
     }
   }
 
+  applyDefaults(config) {
+    config.applicationCategoryId ??= 'PUT_APPLICATION_CATEGORY_ID_HERE';
+    config.transcriptChannelId ??= 'PUT_TRANSCRIPT_CHANNEL_ID_HERE';
+    return config;
+  }
+
   async get(options) {
     await this.ensureExists();
     const details = await stat(this.filePath);
     if (!this.cached || details.mtimeMs !== this.modifiedAt) {
-      const parsed = JSON.parse(await readFile(this.filePath, 'utf8'));
+      const parsed = this.applyDefaults(JSON.parse(await readFile(this.filePath, 'utf8')));
       this.cached = validateConfig(parsed, options);
       this.modifiedAt = details.mtimeMs;
     }
@@ -99,7 +111,7 @@ export class ConfigService {
   async update(mutator, options) {
     const operation = async () => {
       await this.ensureExists();
-      const current = JSON.parse(await readFile(this.filePath, 'utf8'));
+      const current = this.applyDefaults(JSON.parse(await readFile(this.filePath, 'utf8')));
       const next = structuredClone(current);
       await mutator(next);
       validateConfig(next, options);

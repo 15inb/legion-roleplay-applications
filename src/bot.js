@@ -16,6 +16,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { handleReactionRoleCommand } from './reaction-roles.js';
 
 const SESSION_LIFETIME_MS = 30 * 60 * 1000;
 const QUESTIONS_PER_PAGE = 5;
@@ -30,8 +31,9 @@ function isDiscordId(value) {
 }
 
 function configuredPositions(config) {
-  if (!config.reviewerRoleIds.length || config.reviewerRoleIds.some((id) => !isDiscordId(id))) return [];
-  return config.positions.filter((position) => isDiscordId(position.roleId) && isDiscordId(position.reviewChannelId));
+  if (!config.reviewerRoleIds.length || config.reviewerRoleIds.some((id) => !isDiscordId(id))
+    || !isDiscordId(config.applicationCategoryId) || !isDiscordId(config.transcriptChannelId)) return [];
+  return config.positions.filter((position) => isDiscordId(position.roleId));
 }
 
 function truncate(value, length) {
@@ -84,14 +86,15 @@ function setupMainView(config, notice) {
   const readyCount = configuredPositions(config).length;
   const positionLines = config.positions.map((position) => {
     const role = isDiscordId(position.roleId) ? `<@&${position.roleId}>` : 'role not set';
-    const channel = isDiscordId(position.reviewChannelId) ? `<#${position.reviewChannelId}>` : 'channel not set';
-    return `• **${position.name}** — ${role}, ${channel}`;
+    return `• **${position.name}** — ${role}`;
   }).join('\n');
   const embed = new EmbedBuilder()
     .setColor(readyCount === config.positions.length && reviewerIds.length ? '#57F287' : '#FEE75C')
     .setTitle('Application setup')
     .setDescription([
       `**Reviewer roles:** ${reviewerIds.length ? reviewerIds.map((id) => `<@&${id}>`).join(', ') : 'Not set'}`,
+      `**Application category:** ${isDiscordId(config.applicationCategoryId) ? `<#${config.applicationCategoryId}>` : 'Not set'}`,
+      `**Transcript channel:** ${isDiscordId(config.transcriptChannelId) ? `<#${config.transcriptChannelId}>` : 'Not set'}`,
       `**Ready positions:** ${readyCount}/${config.positions.length}`,
       '',
       positionLines,
@@ -103,12 +106,26 @@ function setupMainView(config, notice) {
     .setMinValues(1)
     .setMaxValues(10);
   if (reviewerIds.length) reviewerMenu.setDefaultRoles(...reviewerIds);
+  const categoryMenu = new ChannelSelectMenuBuilder()
+    .setCustomId('setup:category')
+    .setPlaceholder('Select the private applications category')
+    .setChannelTypes(ChannelType.GuildCategory)
+    .setMinValues(1)
+    .setMaxValues(1);
+  if (isDiscordId(config.applicationCategoryId)) categoryMenu.setDefaultChannels(config.applicationCategoryId);
+  const transcriptMenu = new ChannelSelectMenuBuilder()
+    .setCustomId('setup:transcripts')
+    .setPlaceholder('Select the transcript archive channel')
+    .setChannelTypes(ChannelType.GuildText)
+    .setMinValues(1)
+    .setMaxValues(1);
+  if (isDiscordId(config.transcriptChannelId)) transcriptMenu.setDefaultChannels(config.transcriptChannelId);
   const positionMenu = new StringSelectMenuBuilder()
     .setCustomId('setup:position')
     .setPlaceholder('Choose a position to configure')
     .addOptions(config.positions.map((position) => ({
       label: position.name,
-      description: isDiscordId(position.roleId) && isDiscordId(position.reviewChannelId) ? 'Configured' : 'Setup required',
+      description: isDiscordId(position.roleId) ? 'Role configured' : 'Role setup required',
       value: position.id,
     })));
   return {
@@ -116,6 +133,8 @@ function setupMainView(config, notice) {
     embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(reviewerMenu),
+      new ActionRowBuilder().addComponents(categoryMenu),
+      new ActionRowBuilder().addComponents(transcriptMenu),
       new ActionRowBuilder().addComponents(positionMenu),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('setup:add-position').setLabel('Add position').setStyle(ButtonStyle.Success),
@@ -126,13 +145,12 @@ function setupMainView(config, notice) {
 
 function setupPositionView(config, position, confirmDelete = false, notice) {
   const roleIsSet = isDiscordId(position.roleId);
-  const channelIsSet = isDiscordId(position.reviewChannelId);
   const embed = new EmbedBuilder()
-    .setColor(confirmDelete ? '#ED4245' : roleIsSet && channelIsSet ? '#57F287' : '#FEE75C')
+    .setColor(confirmDelete ? '#ED4245' : roleIsSet ? '#57F287' : '#FEE75C')
     .setTitle(confirmDelete ? `Delete ${position.name}?` : `Set up ${position.name}`)
     .setDescription(confirmDelete
       ? 'This removes the position and its questions. Existing submitted applications remain in history.'
-      : `${position.description}\n\n**Granted role:** ${roleIsSet ? `<@&${position.roleId}>` : 'Not set'}\n**Review channel:** ${channelIsSet ? `<#${position.reviewChannelId}>` : 'Not set'}`);
+      : `${position.description}\n\n**Granted role:** ${roleIsSet ? `<@&${position.roleId}>` : 'Not set'}`);
   const components = [];
   if (confirmDelete) {
     components.push(new ActionRowBuilder().addComponents(
@@ -146,16 +164,8 @@ function setupPositionView(config, position, confirmDelete = false, notice) {
       .setMinValues(1)
       .setMaxValues(1);
     if (roleIsSet) roleMenu.setDefaultRoles(position.roleId);
-    const channelMenu = new ChannelSelectMenuBuilder()
-      .setCustomId(`setup:channel:${position.id}`)
-      .setPlaceholder('Select the staff review channel')
-      .setChannelTypes(ChannelType.GuildText)
-      .setMinValues(1)
-      .setMaxValues(1);
-    if (channelIsSet) channelMenu.setDefaultChannels(position.reviewChannelId);
     components.push(
       new ActionRowBuilder().addComponents(roleMenu),
-      new ActionRowBuilder().addComponents(channelMenu),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`setup:edit-position:${position.id}`).setLabel('Edit details').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`setup:delete-position:${position.id}`).setLabel('Delete position').setStyle(ButtonStyle.Danger),
@@ -397,6 +407,70 @@ function answersAttachment(record) {
   return new AttachmentBuilder(Buffer.from(lines.join('\n'), 'utf8'), { name: `application-${record.id}.txt` });
 }
 
+async function fetchChannelMessages(channel, limit = 1000) {
+  const messages = [];
+  let before;
+  while (messages.length < limit) {
+    const batch = await channel.messages.fetch({ limit: Math.min(100, limit - messages.length), ...(before ? { before } : {}) });
+    if (!batch.size) break;
+    messages.push(...batch.values());
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+  return messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+}
+
+function messageTranscriptLine(message) {
+  const timestamp = new Date(message.createdTimestamp).toISOString();
+  const author = message.author?.tag ?? 'Unknown user';
+  const parts = [`[${timestamp}] ${author} (${message.author?.id ?? 'unknown'})`];
+  if (message.content) parts.push(message.content);
+  for (const embed of message.embeds) {
+    if (embed.title) parts.push(`[Embed] ${embed.title}`);
+    if (embed.description) parts.push(embed.description);
+    for (const field of embed.fields ?? []) parts.push(`${field.name}: ${field.value}`);
+  }
+  for (const attachment of message.attachments.values()) parts.push(`[Attachment] ${attachment.name}: ${attachment.url}`);
+  return parts.join('\n');
+}
+
+async function createTranscript(guild, record, config) {
+  const applicationChannel = await guild.channels.fetch(record.reviewChannelId);
+  const transcriptChannel = await guild.channels.fetch(record.transcriptChannelId ?? config.transcriptChannelId);
+  if (!applicationChannel?.isTextBased() || !transcriptChannel?.isTextBased()) throw new Error('Application or transcript channel is unavailable.');
+  const messages = await fetchChannelMessages(applicationChannel);
+  const header = [
+    `Application transcript: ${record.id}`,
+    `Server: ${record.guildName} (${record.guildId})`,
+    `Applicant: ${record.username} (${record.userId})`,
+    `Position: ${record.positionName}`,
+    `Decision: ${record.status}`,
+    `Reviewed by: ${record.decidedBy}`,
+    `Submitted: ${record.createdAt}`,
+    `Decided: ${record.decidedAt}`,
+    record.denialReason ? `Reason: ${record.denialReason}` : null,
+    '',
+    '--- Channel messages ---',
+    '',
+  ].filter((line) => line !== null);
+  let text = [...header, ...messages.map(messageTranscriptLine)].join('\n\n');
+  const maxBytes = 7_500_000;
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) text = `${text.slice(0, maxBytes)}\n\n[Transcript truncated at 7.5 MB]`;
+  const file = new AttachmentBuilder(Buffer.from(text, 'utf8'), { name: `transcript-${record.id}.txt` });
+  const embed = new EmbedBuilder()
+    .setColor(record.status === 'approved' ? '#57F287' : '#ED4245')
+    .setTitle(`${record.positionName} — ${record.status.toUpperCase()}`)
+    .setDescription(`Application **${record.id}** from <@${record.userId}>`)
+    .addFields(
+      { name: 'Reviewer', value: `<@${record.decidedBy}>`, inline: true },
+      { name: 'Messages', value: String(messages.length), inline: true },
+    )
+    .setTimestamp(new Date(record.decidedAt));
+  if (record.denialReason) embed.addFields({ name: 'Reason', value: truncate(record.denialReason, 1024) });
+  await transcriptChannel.send({ embeds: [embed], files: [file], allowedMentions: { parse: [] } });
+  return applicationChannel;
+}
+
 function statusMessage(record) {
   const labels = { pending: 'Pending review', approved: 'Approved', denied: 'Denied' };
   let message = `Your latest application (**${record.id}**, ${record.positionName}) is **${labels[record.status] ?? record.status}**.`;
@@ -412,7 +486,7 @@ async function notifyApplicant(client, record) {
   await user.send(content);
 }
 
-export function attachBotHandlers(client, { configService, store, logger = console }) {
+export function attachBotHandlers(client, { configService, store, reactionRoleStore, logger = console }) {
   const sessions = new Map();
   const processing = new Set();
 
@@ -440,7 +514,8 @@ export function attachBotHandlers(client, { configService, store, logger = conso
       await interaction.reply(ephemeral('That position is no longer available. Please start again.'));
       return;
     }
-    if (!isDiscordId(position.roleId) || !isDiscordId(position.reviewChannelId)
+    if (!isDiscordId(position.roleId)
+      || !isDiscordId(config.applicationCategoryId) || !isDiscordId(config.transcriptChannelId)
       || config.reviewerRoleIds.some((id) => !isDiscordId(id))) {
       await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/application-setup`.'));
       return;
@@ -470,7 +545,7 @@ export function attachBotHandlers(client, { configService, store, logger = conso
       positionId: position.id,
       positionName: position.name,
       roleId: position.roleId,
-      reviewChannelId: position.reviewChannelId,
+      transcriptChannelId: config.transcriptChannelId,
       answers: position.questions.map((question) => ({ question: question.label, value: session.answers[question.id] ?? '' })),
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -478,8 +553,31 @@ export function attachBotHandlers(client, { configService, store, logger = conso
       decidedBy: null,
     };
 
-    const reviewChannel = await interaction.guild.channels.fetch(position.reviewChannelId);
-    if (!reviewChannel?.isTextBased()) throw new Error(`Review channel ${position.reviewChannelId} is not a text channel.`);
+    const safeName = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'applicant';
+    const memberPermissions = [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.ReadMessageHistory,
+      PermissionFlagsBits.AttachFiles,
+      PermissionFlagsBits.EmbedLinks,
+    ];
+    const reviewChannel = await interaction.guild.channels.create({
+      name: `application-${safeName}-${record.id.toLowerCase()}`,
+      type: ChannelType.GuildText,
+      parent: config.applicationCategoryId,
+      topic: `${position.name} • ${interaction.user.tag} • ${record.id}`,
+      permissionOverwrites: [
+        { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: interaction.user.id, allow: memberPermissions },
+        ...config.reviewerRoleIds.map((roleId) => ({ id: roleId, allow: memberPermissions })),
+        {
+          id: client.user.id,
+          allow: [...memberPermissions, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages],
+        },
+      ],
+      reason: `Private channel for application ${record.id}`,
+    });
+    record.reviewChannelId = reviewChannel.id;
     const reviewMessage = await reviewChannel.send({
       content: config.reviewerRoleIds.map((roleId) => `<@&${roleId}>`).join(' '),
       allowedMentions: { roles: config.reviewerRoleIds },
@@ -487,9 +585,13 @@ export function attachBotHandlers(client, { configService, store, logger = conso
       files: [answersAttachment(record)],
     });
     record.reviewMessageId = reviewMessage.id;
+    await reviewChannel.send({
+      content: `<@${record.userId}>, your application has been submitted. You may use this private channel to answer staff follow-up questions.`,
+      allowedMentions: { users: [record.userId] },
+    });
     await store.create(record);
     sessions.delete(session.token);
-    await interaction.reply(ephemeral(`Application **${record.id}** submitted successfully. Use \`/application-status\` to check it.`));
+    await interaction.reply(ephemeral(`Application **${record.id}** submitted successfully: <#${reviewChannel.id}>`));
   }
 
   async function handleModalPage(interaction, config, token, page) {
@@ -520,6 +622,17 @@ export function attachBotHandlers(client, { configService, store, logger = conso
     await submitApplication(interaction, config, session, position);
   }
 
+  async function transcriptAndClose(record, config) {
+    const guild = await client.guilds.fetch(record.guildId);
+    const channel = await createTranscript(guild, record, config);
+    await channel.send(`This application was **${record.status}**. A transcript has been saved and this channel is now locked.`);
+    await Promise.all([
+      channel.permissionOverwrites.edit(record.userId, { SendMessages: false, AddReactions: false }),
+      ...config.reviewerRoleIds.map((roleId) => channel.permissionOverwrites.edit(roleId, { SendMessages: false, AddReactions: false })),
+    ]);
+    await channel.setName(`closed-${record.id.toLowerCase()}`, `Application ${record.id} ${record.status}`).catch(() => {});
+  }
+
   async function approve(interaction, config, record) {
     const member = await interaction.guild.members.fetch(record.userId);
     await member.roles.add(record.roleId, `Application ${record.id} approved by ${interaction.user.tag}`);
@@ -529,7 +642,14 @@ export function attachBotHandlers(client, { configService, store, logger = conso
       decidedBy: interaction.user.id,
     });
     await interaction.message.edit(reviewPayload(updated, config));
-    await interaction.editReply({ content: `Approved **${record.id}** and granted <@&${record.roleId}>.` });
+    let transcriptNote = ' Transcript saved and the application channel was locked.';
+    try {
+      await transcriptAndClose(updated, config);
+    } catch (error) {
+      logger.error(`Transcript failed for ${record.id}:`, error);
+      transcriptNote = ' The decision was saved, but the transcript failed; the application channel was left open. Check the bot logs.';
+    }
+    await interaction.editReply({ content: `Approved **${record.id}** and granted <@&${record.roleId}>.${transcriptNote}` });
     notifyApplicant(client, updated).catch((error) => logger.warn('Could not DM approved applicant:', error.message));
   }
 
@@ -543,7 +663,14 @@ export function attachBotHandlers(client, { configService, store, logger = conso
     const channel = await interaction.guild.channels.fetch(record.reviewChannelId);
     const message = await channel.messages.fetch(record.reviewMessageId);
     await message.edit(reviewPayload(updated, config));
-    await interaction.reply(ephemeral(`Denied application **${record.id}**.`));
+    let transcriptNote = ' Transcript saved and the application channel was locked.';
+    try {
+      await transcriptAndClose(updated, config);
+    } catch (error) {
+      logger.error(`Transcript failed for ${record.id}:`, error);
+      transcriptNote = ' The decision was saved, but the transcript failed; the application channel was left open. Check the bot logs.';
+    }
+    await interaction.editReply({ content: `Denied application **${record.id}**.${transcriptNote}` });
     notifyApplicant(client, updated).catch((error) => logger.warn('Could not DM denied applicant:', error.message));
   }
 
@@ -571,6 +698,22 @@ export function attachBotHandlers(client, { configService, store, logger = conso
           return;
         }
 
+        if (interaction.isChannelSelectMenu() && interaction.customId === 'setup:category') {
+          const next = await configService.update((draft) => {
+            draft.applicationCategoryId = interaction.values[0];
+          }, { allowPlaceholders: true });
+          await interaction.update(setupMainView(next, 'Application category saved.'));
+          return;
+        }
+
+        if (interaction.isChannelSelectMenu() && interaction.customId === 'setup:transcripts') {
+          const next = await configService.update((draft) => {
+            draft.transcriptChannelId = interaction.values[0];
+          }, { allowPlaceholders: true });
+          await interaction.update(setupMainView(next, 'Transcript channel saved.'));
+          return;
+        }
+
         if (interaction.isStringSelectMenu() && interaction.customId === 'setup:position') {
           const position = config.positions.find((item) => item.id === interaction.values[0]);
           if (!position) throw new Error('That position no longer exists.');
@@ -594,18 +737,6 @@ export function attachBotHandlers(client, { configService, store, logger = conso
           }, { allowPlaceholders: true });
           const position = next.positions.find((item) => item.id === positionId);
           await interaction.update(setupPositionView(next, position, false, 'Granted role saved.'));
-          return;
-        }
-
-        if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('setup:channel:')) {
-          const positionId = interaction.customId.split(':')[2];
-          const next = await configService.update((draft) => {
-            const position = draft.positions.find((item) => item.id === positionId);
-            if (!position) throw new Error('That position no longer exists.');
-            position.reviewChannelId = interaction.values[0];
-          }, { allowPlaceholders: true });
-          const position = next.positions.find((item) => item.id === positionId);
-          await interaction.update(setupPositionView(next, position, false, 'Review channel saved.'));
           return;
         }
 
@@ -667,7 +798,6 @@ export function attachBotHandlers(client, { configService, store, logger = conso
                   name,
                   description,
                   roleId: 'PUT_POSITION_ROLE_ID_HERE',
-                  reviewChannelId: 'PUT_REVIEW_CHANNEL_ID_HERE',
                   questions: [{
                     id: 'character-name',
                     label: "What is your character's name?",
@@ -682,7 +812,7 @@ export function attachBotHandlers(client, { configService, store, logger = conso
               ? next.positions.find((item) => item.id === positionId)
               : next.positions.at(-1);
             await interaction.reply({
-              ...setupPositionView(next, position, false, editing ? 'Position updated.' : 'Position added. Now select its role and review channel.'),
+              ...setupPositionView(next, position, false, editing ? 'Position updated.' : 'Position added. Now select its granted role.'),
               flags: MessageFlags.Ephemeral,
             });
           } catch (error) {
@@ -847,6 +977,8 @@ export function attachBotHandlers(client, { configService, store, logger = conso
             return;
           }
           await interaction.reply({ ...setupMainView(config), flags: MessageFlags.Ephemeral });
+        } else if (interaction.commandName === 'reaction-role') {
+          await handleReactionRoleCommand(interaction, reactionRoleStore);
         }
         return;
       }
@@ -935,6 +1067,7 @@ export function attachBotHandlers(client, { configService, store, logger = conso
           return;
         }
         processing.add(id);
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         try {
           await deny(interaction, config, record, interaction.fields.getTextInputValue('reason'));
         } finally {

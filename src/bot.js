@@ -41,24 +41,47 @@ function truncate(value, length) {
   return `${value.slice(0, length - 1)}…`;
 }
 
-function panelEmbed(config) {
+function panelEmbed(config, positions) {
+  const multiple = positions.length > 1;
+  const description = multiple
+    ? ['Choose the application you want to submit:', '', ...positions.map((position) => `• **${position.name}** — ${position.description || 'Open this application'}`)].join('\n')
+    : positions[0]?.description || config.panel.description;
   return new EmbedBuilder()
     .setColor(config.panel.color)
-    .setTitle(config.panel.title)
-    .setDescription(config.panel.description)
-    .setFooter({ text: 'Use the button below to begin.' });
+    .setTitle(multiple ? 'Applications' : positions[0]?.name || config.panel.title)
+    .setDescription(truncate(description, 4000))
+    .setFooter({ text: multiple ? 'Choose an application below.' : 'Use the button below to begin.' });
 }
 
-function panelComponents() {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('application:start')
-        .setLabel('Apply now')
-        .setEmoji('📝')
-        .setStyle(ButtonStyle.Primary),
-    ),
-  ];
+function panelComponents(positions) {
+  const buttons = positions.map((position) => new ButtonBuilder()
+    .setCustomId(`application:start:${position.id}`)
+    .setLabel(truncate(position.name, 80))
+    .setEmoji('📝')
+    .setStyle(ButtonStyle.Primary));
+  const rows = [];
+  for (let index = 0; index < buttons.length; index += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(index, index + 5)));
+  }
+  return rows;
+}
+
+function panelPositionPicker(config) {
+  const positions = configuredPositions(config);
+  if (!positions.length) return ephemeral('Applications are not configured yet. Complete `/setup` first.');
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('application:panel-positions')
+    .setPlaceholder('Select applications for this panel')
+    .setMinValues(1)
+    .setMaxValues(positions.length)
+    .addOptions(positions.map((position) => ({
+      label: position.name,
+      description: position.description || `Add ${position.name} to the panel`,
+      value: position.id,
+    })));
+  return ephemeral('Select one or more applications. Each selected application will get its own direct button:', {
+    components: [new ActionRowBuilder().addComponents(menu)],
+  });
 }
 
 function positionPicker(config) {
@@ -822,14 +845,21 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     const pageQuestions = position.questions.slice(page * QUESTIONS_PER_PAGE, (page + 1) * QUESTIONS_PER_PAGE);
     for (const question of pageQuestions) session.answers[question.id] = interaction.fields.getTextInputValue(question.id);
     const nextPage = page + 1;
-    if (nextPage < Math.ceil(position.questions.length / QUESTIONS_PER_PAGE)) {
+    const pageCount = Math.ceil(position.questions.length / QUESTIONS_PER_PAGE);
+    if (nextPage < pageCount) {
+      const nextPageQuestions = Math.min(QUESTIONS_PER_PAGE, position.questions.length - nextPage * QUESTIONS_PER_PAGE);
       const button = new ButtonBuilder()
         .setCustomId(`application:continue:${token}:${nextPage}`)
-        .setLabel(`Continue (${nextPage + 1}/${Math.ceil(position.questions.length / QUESTIONS_PER_PAGE)})`)
+        .setLabel(`Continue to ${nextPageQuestions} more question${nextPageQuestions === 1 ? '' : 's'}`)
         .setStyle(ButtonStyle.Primary);
-      await interaction.reply(ephemeral('Your answers were saved. Continue to the next page:', {
+      await interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(config.panel.color)
+          .setTitle(`Page ${page + 1} of ${pageCount} saved`)
+          .setDescription('Your answers are saved privately. Discord forms support five questions at a time, so use the button below to open the next page.')],
         components: [new ActionRowBuilder().addComponents(button)],
-      }));
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     await submitApplication(interaction, config, session, position);
@@ -1172,8 +1202,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
             : ephemeral('You have not submitted an application yet.'));
         } else if (interaction.commandName === 'panel') {
           if (!interaction.channel?.isTextBased()) return;
-          await interaction.channel.send({ embeds: [panelEmbed(config)], components: panelComponents() });
-          await interaction.reply(ephemeral('Application panel posted.'));
+          await interaction.reply(panelPositionPicker(config));
         } else if (interaction.commandName === 'questions') {
           if (!isConfigManager(interaction)) {
             await interaction.reply(ephemeral('You need the **Manage Server** permission to change application questions.'));
@@ -1232,8 +1261,29 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
         return;
       }
 
+      if (interaction.isStringSelectMenu() && interaction.customId === 'application:panel-positions') {
+        if (!isConfigManager(interaction)) {
+          await interaction.reply(ephemeral('You need the **Manage Server** permission to post application panels.'));
+          return;
+        }
+        const available = new Map(configuredPositions(config).map((position) => [position.id, position]));
+        const positions = interaction.values.map((id) => available.get(id)).filter(Boolean);
+        if (!positions.length || !interaction.channel?.isTextBased()) {
+          await interaction.update({ content: 'Those applications are no longer available. Run `/panel` again.', components: [] });
+          return;
+        }
+        await interaction.channel.send({ embeds: [panelEmbed(config, positions)], components: panelComponents(positions) });
+        await interaction.update({ content: `Application panel posted with ${positions.length} direct button${positions.length === 1 ? '' : 's'}.`, components: [] });
+        return;
+      }
+
       if (interaction.isButton() && interaction.customId === 'application:start') {
         await interaction.reply(positionPicker(config));
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith('application:start:')) {
+        await startApplication(interaction, config, interaction.customId.slice('application:start:'.length));
         return;
       }
 

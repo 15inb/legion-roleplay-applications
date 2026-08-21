@@ -73,6 +73,11 @@ export class ReactionRoleStore {
     await this.load();
     return this.records.filter((item) => item.guildId === guildId);
   }
+
+  async listForMessage(guildId, messageId) {
+    await this.load();
+    return this.records.filter((item) => item.guildId === guildId && item.messageId === messageId);
+  }
 }
 
 async function fetchTargetMessage(interaction) {
@@ -82,32 +87,101 @@ async function fetchTargetMessage(interaction) {
   return { channel, message: await channel.messages.fetch(messageId) };
 }
 
+function assertManageableRole(interaction, role) {
+  if (role.managed) throw new Error(`${role.name} is managed by an integration and cannot be assigned.`);
+  const botHighestRole = interaction.guild.members.me?.roles.highest;
+  if (botHighestRole && role.comparePositionTo(botHighestRole) >= 0) {
+    throw new Error(`${role.name} must be below the bot's highest role.`);
+  }
+}
+
+function mappingFields(records) {
+  if (!records.length) return [{ name: 'Available roles', value: '_No roles are currently configured._' }];
+  const fields = [];
+  let lines = [];
+  let length = 0;
+  for (const record of records) {
+    const line = `${record.emoji}  →  <@&${record.roleId}>`;
+    if (length + line.length + 1 > 1024 && lines.length) {
+      fields.push({ name: fields.length ? 'Available roles (continued)' : 'Available roles', value: lines.join('\n') });
+      lines = [];
+      length = 0;
+    }
+    lines.push(line);
+    length += line.length + 1;
+  }
+  if (lines.length) fields.push({ name: fields.length ? 'Available roles (continued)' : 'Available roles', value: lines.join('\n') });
+  return fields;
+}
+
+export function buildReactionRoleEmbed({ title, description, color = '#8B1A1A' }, records) {
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title || 'Reaction Roles')
+    .setDescription(description || 'Choose the reactions for the roles you want.')
+    .addFields(mappingFields(records))
+    .setFooter({ text: 'Add a reaction to receive a role • Remove it to remove the role' });
+}
+
+async function refreshReactionRolePanel(message, records) {
+  if (message.author?.id !== message.client.user.id) return;
+  const existing = message.embeds[0];
+  const embed = buildReactionRoleEmbed({
+    title: existing?.title,
+    description: existing?.description,
+    color: existing?.hexColor ?? '#8B1A1A',
+  }, records);
+  await message.edit({ embeds: [embed], allowedMentions: { parse: [] } });
+}
+
+function createMappingsFromOptions(interaction) {
+  const mappings = [];
+  for (let index = 1; index <= 5; index += 1) {
+    const suffix = index === 1 ? '' : `-${index}`;
+    const role = interaction.options.getRole(`role${suffix}`, index === 1);
+    const emoji = interaction.options.getString(`emoji${suffix}`, index === 1)?.trim();
+    if (!role && !emoji) continue;
+    if (!role || !emoji) throw new Error(`Role ${index} and emoji ${index} must be provided together.`);
+    assertManageableRole(interaction, role);
+    mappings.push({ role, emoji, emojiKey: emojiKeyFromInput(emoji) });
+  }
+  if (new Set(mappings.map((mapping) => mapping.emojiKey)).size !== mappings.length) {
+    throw new Error('Each role on a panel must use a different emoji.');
+  }
+  if (new Set(mappings.map((mapping) => mapping.role.id)).size !== mappings.length) {
+    throw new Error('Each role can appear only once on a panel.');
+  }
+  return mappings;
+}
+
 export async function handleReactionRoleCommand(interaction, store) {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === 'create') {
     const channel = interaction.options.getChannel('channel', true);
-    const role = interaction.options.getRole('role', true);
-    const emoji = interaction.options.getString('emoji', true).trim();
+    const mappings = createMappingsFromOptions(interaction);
     const title = interaction.options.getString('title', true);
-    const description = interaction.options.getString('description') ?? 'React below to add or remove the role.';
+    const description = interaction.options.getString('description') ?? 'Choose the reactions for the roles you want.';
     if (!channel.isTextBased()) throw new Error('The selected channel must be a text channel.');
-    const embed = new EmbedBuilder()
-      .setColor('#8B1A1A')
-      .setTitle(title)
-      .setDescription(description)
-      .addFields({ name: 'Role', value: `<@&${role.id}>` })
-      .setFooter({ text: 'Remove your reaction to remove the role.' });
-    const message = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
-    await message.react(emoji);
-    await store.add({
+    const records = mappings.map((mapping) => ({
       guildId: interaction.guildId,
       channelId: channel.id,
-      messageId: message.id,
-      roleId: role.id,
-      emoji,
-      emojiKey: emojiKeyFromInput(emoji),
+      roleId: mapping.role.id,
+      emoji: mapping.emoji,
+      emojiKey: mapping.emojiKey,
       createdAt: new Date().toISOString(),
-    });
+    }));
+    const embed = buildReactionRoleEmbed({ title, description }, records);
+    const message = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    try {
+      for (const record of records) {
+        await message.react(record.emoji);
+        await store.add({ ...record, messageId: message.id });
+      }
+    } catch (error) {
+      await message.delete().catch(() => {});
+      for (const record of records) await store.remove(interaction.guildId, message.id, record.emojiKey);
+      throw error;
+    }
     await interaction.reply({ content: `Reaction-role panel created: ${message.url}`, flags: MessageFlags.Ephemeral });
     return;
   }
@@ -116,8 +190,17 @@ export async function handleReactionRoleCommand(interaction, store) {
     const { channel, message } = await fetchTargetMessage(interaction);
     const role = interaction.options.getRole('role', true);
     const emoji = interaction.options.getString('emoji', true).trim();
+    assertManageableRole(interaction, role);
+    const existing = await store.listForMessage(interaction.guildId, message.id);
+    if (existing.length >= 20) throw new Error('Discord supports at most 20 different reactions on one message.');
+    if (existing.some((record) => record.emojiKey === emojiKeyFromInput(emoji))) {
+      throw new Error('That emoji is already configured on this panel. Remove it first if you want to change its role.');
+    }
+    if (existing.some((record) => record.roleId === role.id)) {
+      throw new Error('That role is already configured on this panel. Each role should use one reaction.');
+    }
     await message.react(emoji);
-    await store.add({
+    const record = await store.add({
       guildId: interaction.guildId,
       channelId: channel.id,
       messageId: message.id,
@@ -126,6 +209,7 @@ export async function handleReactionRoleCommand(interaction, store) {
       emojiKey: emojiKeyFromInput(emoji),
       createdAt: new Date().toISOString(),
     });
+    await refreshReactionRolePanel(message, [...existing, record]);
     await interaction.reply({ content: `Added ${emoji} → <@&${role.id}> to ${message.url}.`, flags: MessageFlags.Ephemeral });
     return;
   }
@@ -138,6 +222,7 @@ export async function handleReactionRoleCommand(interaction, store) {
     if (!removed) throw new Error('No reaction-role mapping was found for that message and emoji.');
     const reaction = message.reactions.cache.find((item) => emojiKeyFromReaction(item) === emojiKey);
     await reaction?.users.remove(interaction.client.user.id).catch(() => {});
+    await refreshReactionRolePanel(message, await store.listForMessage(interaction.guildId, message.id));
     await interaction.reply({ content: `Removed the ${emoji} reaction-role mapping.`, flags: MessageFlags.Ephemeral });
     return;
   }

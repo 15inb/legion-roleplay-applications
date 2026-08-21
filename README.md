@@ -139,11 +139,11 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 
 - `/apply` — choose a position and start an application
 - `/status` — view the latest application status
-- `/panel` — post the permanent Apply button (Manage Server required)
+- `/panel` — choose one or more applications and post a direct button for each one (Manage Server required)
 - `/setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
 - `/message` — DM the applicant from inside their open application channel (reviewers only)
 - `/questions` — add, edit, reorder, or delete questions using a private Discord control panel (Manage Server required)
-- `/roles create` — post a new reaction-role panel
+- `/roles create` — post a new reaction-role panel with up to five roles at once
 - `/roles add` — add another emoji/role mapping to a message
 - `/roles remove` — remove a mapping
 - `/roles list` — list configured mappings
@@ -163,6 +163,8 @@ Changes are saved to the bot's private `data/settings.json` runtime file and app
 ## Private channels and transcripts
 
 After the final form page is submitted, the bot creates a channel under the category selected in `/setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original questions and answers are posted as numbered embeds with the staff review controls.
+
+Discord allows at most five components in one modal and does not allow a bot to open another modal directly from a modal submission. Applications with more than five questions therefore use a private, ephemeral progress message with one Continue button between pages. The direct application panel buttons still skip the old duplicate position-selection step.
 
 To contact the applicant, a reviewer runs this inside the application channel:
 
@@ -189,10 +191,10 @@ The bot needs **View Channels**, **Send Messages**, **Send Messages in Threads**
 Create a panel entirely from Discord:
 
 ```text
-/roles create channel:#roles role:@Legion emoji:🛡️ title:Join the Legion
+/roles create channel:#roles role:@Legion emoji:🛡️ title:Choose your roles role-2:@Officer emoji-2:⚔️
 ```
 
-Removing a reaction removes the role. Custom server emoji mentions are supported. Reaction-role mappings persist in `data/reaction-roles.json`, so they continue working after restarts. Use `/roles add` to attach additional mappings to an existing message; enable Discord Developer Mode to copy that message's ID.
+The create command supports up to five role/emoji pairs, and the panel embed clearly lists every mapping. Removing a reaction removes its role. Custom server emoji mentions are supported. Reaction-role mappings persist in `data/reaction-roles.json`, so they continue working after restarts. Use `/roles add` to attach more mappings to the same panel later; the displayed list updates automatically. Enable Discord Developer Mode to copy that message's ID.
 
 ## Data and privacy
 

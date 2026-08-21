@@ -24,6 +24,9 @@ test('applications persist and can be decided once', async () => {
   assert.equal(await store.hasPending('guild', 'user'), false);
   assert.equal(await store.decide('TEST123', { status: 'denied' }), null);
 
+  await store.create({ id: 'DENIED1', guildId: 'guild', userId: 'user', status: 'denied', decidedAt: '2026-08-21T12:00:00.000Z' });
+  assert.equal((await store.latestDeniedForUser('guild', 'user')).id, 'DENIED1');
+
   const persisted = JSON.parse(await readFile(file, 'utf8'));
   assert.equal(persisted[0].status, 'approved');
 });

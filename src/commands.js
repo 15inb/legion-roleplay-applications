@@ -28,6 +28,21 @@ export const commands = [
       .setMaxLength(1900)
       .setRequired(true)),
   new SlashCommandBuilder()
+    .setName('bar')
+    .setDescription('Manage application bars.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((subcommand) => subcommand
+      .setName('add')
+      .setDescription('Temporarily or permanently bar a user from applying.')
+      .addUserOption((option) => option.setName('user').setDescription('User to bar.').setRequired(true))
+      .addStringOption((option) => option.setName('duration').setDescription('Examples: 30m, 12h, 7d, 3mo, 1y, or permanent.').setMaxLength(50).setRequired(true))
+      .addStringOption((option) => option.setName('reason').setDescription('Reason shown to staff and the user.').setMaxLength(500)))
+    .addSubcommand((subcommand) => subcommand
+      .setName('remove')
+      .setDescription('Remove an application bar.')
+      .addUserOption((option) => option.setName('user').setDescription('User whose bar should be removed.').setRequired(true)))
+    .addSubcommand((subcommand) => subcommand.setName('list').setDescription('List active application bars.')),
+  new SlashCommandBuilder()
     .setName('roles')
     .setDescription('Create and manage reaction-role messages.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)

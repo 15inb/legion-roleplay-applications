@@ -16,8 +16,10 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { handleReactionRoleCommand } from './reaction-roles.js';
+import { handleApplicationBarCommand } from './restrictions.js';
 
 const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const DENIAL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CONFIG_QUESTIONS_PER_PAGE = 20;
 
 function ephemeral(content, extra = {}) {
@@ -712,7 +714,13 @@ async function notifyApplicant(client, record) {
   await user.send({ embeds: [embed] });
 }
 
-export function attachBotHandlers(client, { configService, store, reactionRoleStore, logger = console }) {
+export function attachBotHandlers(client, {
+  configService,
+  store,
+  reactionRoleStore,
+  restrictionStore = { getActive: async () => null },
+  logger = console,
+}) {
   const sessions = new Map();
   const processing = new Set();
 
@@ -735,7 +743,49 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
   }
 
+  async function applicationBlock(guildId, userId, now = Date.now()) {
+    const bar = await restrictionStore.getActive(guildId, userId, now);
+    if (bar) return { type: 'bar', record: bar };
+    const denial = await store.latestDeniedForUser?.(guildId, userId);
+    if (!denial) return null;
+    const decidedAt = Date.parse(denial.decidedAt);
+    if (!Number.isFinite(decidedAt)) return null;
+    const expiresAt = decidedAt + DENIAL_COOLDOWN_MS;
+    if (expiresAt <= now) return null;
+    return { type: 'cooldown', expiresAt, denial };
+  }
+
+  function applicationBlockPayload(block) {
+    if (block.type === 'bar') {
+      const duration = block.record.expiresAt === null
+        ? 'Permanent'
+        : `<t:${Math.floor(Date.parse(block.record.expiresAt) / 1000)}:F> (<t:${Math.floor(Date.parse(block.record.expiresAt) / 1000)}:R>)`;
+      return {
+        embeds: [new EmbedBuilder()
+          .setColor('#ED4245')
+          .setTitle('Applications Restricted')
+          .setDescription('You are currently barred from submitting applications in this server.')
+          .addFields({ name: 'Restriction ends', value: duration }, { name: 'Reason', value: block.record.reason || 'No reason provided.' })],
+        flags: MessageFlags.Ephemeral,
+      };
+    }
+    const timestamp = Math.floor(block.expiresAt / 1000);
+    return {
+      embeds: [new EmbedBuilder()
+        .setColor('#FEE75C')
+        .setTitle('Application Cooldown')
+        .setDescription(`You must wait 24 hours after a denied application before applying again. You can submit another application <t:${timestamp}:R>.`)
+        .addFields({ name: 'Cooldown ends', value: `<t:${timestamp}:F>` })],
+      flags: MessageFlags.Ephemeral,
+    };
+  }
+
   async function startApplication(interaction, config, positionId) {
+    const block = await applicationBlock(interaction.guildId, interaction.user.id);
+    if (block) {
+      await interaction.reply(applicationBlockPayload(block));
+      return;
+    }
     if (!config.allowMultiplePendingApplications && await store.hasPending(interaction.guildId, interaction.user.id)) {
       await interaction.reply(ephemeral('You already have an application awaiting review. Use `/status` to check it.'));
       return;
@@ -1234,6 +1284,17 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
           await interaction.reply(ephemeral('Message sent to the applicant by DM.'));
         } else if (interaction.commandName === 'roles') {
           await handleReactionRoleCommand(interaction, reactionRoleStore);
+        } else if (interaction.commandName === 'bar') {
+          if (!isConfigManager(interaction)) {
+            await interaction.reply(ephemeral('You need the **Manage Server** permission to manage application bars.'));
+            return;
+          }
+          try {
+            await handleApplicationBarCommand(interaction, restrictionStore);
+          } catch (error) {
+            logger.warn('Could not manage application bar:', error.message);
+            await interaction.reply(ephemeral(`Could not manage the application bar: ${error.message}`));
+          }
         }
         return;
       }
@@ -1346,6 +1407,17 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     try {
       const session = sessionForUser(message.author.id);
       if (session) {
+        const block = await applicationBlock(session.guildId, message.author.id);
+        if (block) {
+          sessions.delete(session.token);
+          const payload = applicationBlockPayload(block);
+          delete payload.flags;
+          payload.embeds[0].setDescription(block.type === 'bar'
+            ? 'Your unfinished application interview was closed because you are currently barred from applying.'
+            : 'Your unfinished application interview was closed because a 24-hour denial cooldown is active.');
+          await message.reply(payload);
+          return;
+        }
         if (session.processing) {
           await message.reply({
             embeds: [new EmbedBuilder()

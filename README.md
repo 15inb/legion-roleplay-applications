@@ -14,6 +14,8 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Decision transcripts archived to a configured channel
 - Persistent reaction-role panels
 - Required denial reasons and applicant decision DMs
+- Automatic 24-hour reapplication cooldown after denial
+- Timed or permanent application bars managed from Discord
 - Persistent application history stored in `data/applications.json`
 - `/status` for applicants
 - `/panel` for server managers
@@ -142,6 +144,9 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 - `/panel` — choose one or more applications and post a direct button for each one (Manage Server required)
 - `/setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
 - `/message` — DM the applicant from inside their open application channel (reviewers only)
+- `/bar add` — bar a user from applying for a duration or permanently (Manage Server required)
+- `/bar remove` — remove a user's application bar (Manage Server required)
+- `/bar list` — list active application bars (Manage Server required)
 - `/questions` — add, edit, reorder, or delete questions using a private Discord control panel (Manage Server required)
 - `/roles create` — post a new reaction-role panel with up to five roles at once
 - `/roles add` — add another emoji/role mapping to a message
@@ -163,6 +168,17 @@ Changes are saved to the bot's private `data/settings.json` runtime file and app
 ## Private channels and transcripts
 
 Pressing an application button starts a private DM interview with the bot. Questions are sent one at a time, and each DM reply automatically advances to the next question. Applicants can type `back` to revise their previous answer or `cancel` to discard the unfinished interview. Answers are checked against the required and character-limit settings configured through `/questions`. An unfinished interview expires after 24 hours of inactivity or when the bot restarts.
+
+After an application is denied, that user must wait 24 hours from the decision before starting another application. Staff can also restrict application access from Discord:
+
+```text
+/bar add user:@Member duration:7d reason:Wait before reapplying
+/bar add user:@Member duration:permanent reason:Application access revoked
+/bar remove user:@Member
+/bar list
+```
+
+Durations support seconds (`30s`), minutes (`30m`), hours (`12h`), days (`7d`), weeks (`3w`), 30-day months (`6mo`), years (`1y`), combined values such as `1d12h`, and `permanent`. Bars are saved in `data/application-bars.json`, survive restarts, automatically expire, and are checked again during an unfinished DM interview. Removing a manual bar does not bypass an active automatic denial cooldown.
 
 After the final DM answer is submitted, the bot creates a channel under the category selected in `/setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original questions and answers are posted as numbered embeds with the staff review controls.
 
@@ -198,4 +214,4 @@ The create command supports up to five role/emoji pairs, and the panel embed cle
 
 ## Data and privacy
 
-Answers are posted only in private application channels and saved locally in `data/applications.json`. After a decision, the channel is permanently deleted and a Discord-readable transcript plus an HTML backup are sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.
+Answers are posted only in private application channels and saved locally in `data/applications.json`. Manual application bars are saved in `data/application-bars.json`. After a decision, the channel is permanently deleted and a Discord-readable transcript plus an HTML backup are sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.

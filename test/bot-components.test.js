@@ -100,6 +100,54 @@ test('application interviews begin in DMs with the full question text', async ()
   assert.match(response.embeds[0].data.title, /Application Started in DMs/);
 });
 
+test('application interviews enforce permanent bars and the 24-hour denial cooldown', async () => {
+  const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
+  config.reviewerRoleIds = ['123456789012345678'];
+  config.applicationCategoryId = '223456789012345678';
+  config.transcriptChannelId = '323456789012345678';
+  config.positions[0].roleId = '423456789012345678';
+  let handler;
+  let dmCount = 0;
+  const responses = [];
+  const client = { on: (event, callback) => { if (event === 'interactionCreate') handler = callback; } };
+  attachBotHandlers(client, {
+    configService: { get: async () => config },
+    store: {
+      hasPending: async () => false,
+      latestDeniedForUser: async (guildId, userId) => userId === 'cooldown-user'
+        ? { decidedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() }
+        : null,
+    },
+    restrictionStore: {
+      getActive: async (guildId, userId) => userId === 'barred-user'
+        ? { expiresAt: null, reason: 'Application access revoked.' }
+        : null,
+    },
+    logger: console,
+  });
+  const attempt = async (userId) => handler({
+    customId: 'application:position',
+    values: ['legionnaire-application'],
+    user: { id: userId, send: async () => { dmCount += 1; } },
+    guildId: 'guild',
+    guild: { name: 'Test Guild' },
+    inGuild: () => true,
+    isMessageComponent: () => true,
+    isModalSubmit: () => false,
+    isChatInputCommand: () => false,
+    isStringSelectMenu: () => true,
+    reply: async (payload) => { responses.push(payload); },
+  });
+
+  await attempt('barred-user');
+  await attempt('cooldown-user');
+  assert.equal(dmCount, 0);
+  assert.match(responses[0].embeds[0].data.title, /Applications Restricted/);
+  assert.match(responses[0].embeds[0].data.fields[1].value, /revoked/);
+  assert.match(responses[1].embeds[0].data.title, /Application Cooldown/);
+  assert.match(responses[1].embeds[0].data.description, /24 hours/);
+});
+
 test('application setup renders reviewer, category, transcript, and position controls', async () => {
   const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
   let handler;

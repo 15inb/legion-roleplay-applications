@@ -1,7 +1,51 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { attachBotHandlers } from '../src/bot.js';
+import { attachBotHandlers, buildTranscriptHtml } from '../src/bot.js';
+
+test('HTML transcripts are readable, complete, and escape untrusted content', () => {
+  const html = buildTranscriptHtml({
+    id: 'LEGION-001',
+    status: 'denied',
+    positionName: 'Legionnaire Application',
+    guildName: 'Imperial Legion',
+    username: 'Test Applicant',
+    userId: '123456789012345678',
+    decidedBy: '223456789012345678',
+    createdAt: '2026-08-21T12:00:00.000Z',
+    decidedAt: '2026-08-21T13:00:00.000Z',
+    denialReason: '<script>unsafe reason</script>',
+  }, [{
+    author: {
+      tag: 'test-applicant',
+      id: '123456789012345678',
+      displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
+    },
+    createdTimestamp: new Date('2026-08-21T12:30:00.000Z').getTime(),
+    content: '<script>alert("unsafe")</script> Here is my response.',
+    embeds: [{
+      title: 'Question 1',
+      description: 'Why do you want to join?',
+      fields: [{ name: 'Answer', value: 'To serve the Empire.' }],
+    }],
+    attachments: new Map([['attachment', {
+      name: 'proof.png',
+      url: 'https://cdn.discordapp.com/attachments/proof.png',
+      contentType: 'image/png',
+    }]]),
+  }], 'application-test-applicant', 2);
+
+  assert.match(html, /^<!doctype html>/);
+  assert.match(html, /Conversation transcript/);
+  assert.match(html, /Question 1/);
+  assert.match(html, /To serve the Empire\./);
+  assert.match(html, /proof\.png/);
+  assert.match(html, /attachment-preview/);
+  assert.match(html, /2 older messages were omitted/);
+  assert.match(html, /&lt;script&gt;unsafe reason&lt;\/script&gt;/);
+  assert.match(html, /&lt;script&gt;alert\(&quot;unsafe&quot;\)&lt;\/script&gt;/);
+  assert.ok(!html.includes('<script>'));
+});
 
 test('long Legion questions render in modal label descriptions without truncation', async () => {
   const config = JSON.parse(await readFile('config/applications.json', 'utf8'));

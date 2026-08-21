@@ -436,18 +436,103 @@ async function fetchChannelMessages(channel, limit = 1000) {
   return messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 }
 
-function messageTranscriptLine(message) {
-  const timestamp = new Date(message.createdTimestamp).toISOString();
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function renderTranscriptEmbed(embed) {
+  const fields = (embed.fields ?? []).map((field) => `
+    <div class="embed-field">
+      <strong>${escapeHtml(field.name)}</strong>
+      <div>${escapeHtml(field.value)}</div>
+    </div>`).join('');
+  return `<div class="discord-embed">
+    ${embed.author?.name ? `<div class="embed-author">${escapeHtml(embed.author.name)}</div>` : ''}
+    ${embed.title ? `<div class="embed-title">${escapeHtml(embed.title)}</div>` : ''}
+    ${embed.description ? `<div class="embed-description">${escapeHtml(embed.description)}</div>` : ''}
+    ${fields ? `<div class="embed-fields">${fields}</div>` : ''}
+    ${embed.footer?.text ? `<div class="embed-footer">${escapeHtml(embed.footer.text)}</div>` : ''}
+  </div>`;
+}
+
+function renderTranscriptMessage(message) {
   const author = message.author?.tag ?? 'Unknown user';
-  const parts = [`[${timestamp}] ${author} (${message.author?.id ?? 'unknown'})`];
-  if (message.content) parts.push(message.content);
-  for (const embed of message.embeds) {
-    if (embed.title) parts.push(`[Embed] ${embed.title}`);
-    if (embed.description) parts.push(embed.description);
-    for (const field of embed.fields ?? []) parts.push(`${field.name}: ${field.value}`);
-  }
-  for (const attachment of message.attachments.values()) parts.push(`[Attachment] ${attachment.name}: ${attachment.url}`);
-  return parts.join('\n');
+  const authorId = message.author?.id ?? 'unknown';
+  const avatar = message.author?.displayAvatarURL?.({ extension: 'png', size: 64 }) ?? '';
+  const timestamp = new Date(message.createdTimestamp).toISOString();
+  const embeds = [...(message.embeds ?? [])].map(renderTranscriptEmbed).join('');
+  const attachments = [...(message.attachments?.values?.() ?? [])].map((attachment) => {
+    const link = `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noreferrer">${escapeHtml(attachment.name ?? 'Attachment')}</a>`;
+    const preview = attachment.contentType?.startsWith('image/')
+      ? `<img class="attachment-preview" src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name ?? 'Image attachment')}">`
+      : '';
+    return `<div class="attachment">📎 ${link}${preview}</div>`;
+  }).join('');
+  return `<article class="message">
+    <div class="avatar">${avatar ? `<img src="${escapeHtml(avatar)}" alt="">` : escapeHtml(author.slice(0, 1).toUpperCase())}</div>
+    <div class="message-body">
+      <div class="message-header">
+        <strong>${escapeHtml(author)}</strong>
+        <span class="user-id">${escapeHtml(authorId)}</span>
+        <time datetime="${timestamp}">${escapeHtml(timestamp.replace('T', ' ').replace('.000Z', ' UTC'))}</time>
+      </div>
+      ${message.content ? `<div class="message-content">${escapeHtml(message.content)}</div>` : ''}
+      ${embeds}
+      ${attachments}
+    </div>
+  </article>`;
+}
+
+export function buildTranscriptHtml(record, messages, channelName = 'application', omittedCount = 0) {
+  const approved = record.status === 'approved';
+  const reason = record.denialReason
+    ? `<div class="reason"><strong>Decision reason</strong><div>${escapeHtml(record.denialReason)}</div></div>`
+    : '';
+  const messageHtml = messages.map(renderTranscriptMessage).join('\n');
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${escapeHtml(record.positionName)} — ${escapeHtml(record.id)}</title>
+  <style>
+    :root{color-scheme:dark;--bg:#111214;--panel:#1e1f22;--panel2:#2b2d31;--text:#dbdee1;--muted:#949ba4;--line:#3f4147;--accent:#5865f2;--approved:#23a559;--denied:#f23f42}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}.container{max-width:1100px;margin:0 auto;padding:36px 20px 60px}
+    .hero,.transcript{background:var(--panel);border:1px solid #292b2f;border-radius:14px;box-shadow:0 10px 35px #0005}.hero{padding:26px;margin-bottom:24px;border-left:6px solid ${approved ? 'var(--approved)' : 'var(--denied)'}}
+    h1{font-size:26px;margin:0 0 6px}.subtitle{color:var(--muted);margin-bottom:22px}.status{display:inline-block;padding:5px 11px;border-radius:999px;font-weight:700;background:${approved ? 'var(--approved)' : 'var(--denied)'};color:white;text-transform:uppercase;font-size:12px;letter-spacing:.08em}
+    .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:22px}.meta-item{background:var(--panel2);border-radius:8px;padding:12px}.meta-item span{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}.reason{background:#2b2022;border:1px solid #5b292d;border-radius:8px;padding:14px;margin-top:16px}.reason strong{display:block;margin-bottom:5px}
+    .transcript-title{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;align-items:center}.transcript-title h2{font-size:18px;margin:0}.count{color:var(--muted)}
+    .message{display:flex;gap:14px;padding:16px 22px}.message:hover{background:#242529}.message+.message{border-top:1px solid #2a2c30}.avatar{width:42px;height:42px;flex:0 0 42px;border-radius:50%;background:var(--accent);display:grid;place-items:center;font-weight:700;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}.message-body{min-width:0;flex:1}.message-header{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}.message-header time,.user-id{font-size:12px;color:var(--muted)}.message-content,.embed-description,.embed-field div{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}
+    .discord-embed{max-width:720px;background:var(--panel2);border-left:4px solid var(--accent);border-radius:4px;padding:12px 14px;margin-top:10px}.embed-author,.embed-footer{font-size:12px;color:var(--muted)}.embed-title{font-weight:700;margin:4px 0}.embed-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px}.embed-field strong{display:block}.attachment{margin-top:8px}.attachment a{color:#00a8fc;text-decoration:none}.attachment-preview{display:block;max-width:min(560px,100%);max-height:420px;border-radius:8px;margin-top:8px}.omitted{padding:12px;text-align:center;color:var(--muted);background:#25262a}
+    footer{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}@media(max-width:600px){.container{padding:16px 8px}.message{padding:14px 12px}.hero{padding:18px}}
+  </style>
+</head>
+<body><main class="container">
+  <section class="hero">
+    <span class="status">${escapeHtml(record.status)}</span>
+    <h1>${escapeHtml(record.positionName)}</h1>
+    <div class="subtitle">Application ${escapeHtml(record.id)} • ${escapeHtml(record.guildName)}</div>
+    <div class="meta">
+      <div class="meta-item"><span>Applicant</span>${escapeHtml(record.username)} (${escapeHtml(record.userId)})</div>
+      <div class="meta-item"><span>Reviewer</span>${escapeHtml(record.decidedBy)}</div>
+      <div class="meta-item"><span>Submitted</span>${escapeHtml(record.createdAt)}</div>
+      <div class="meta-item"><span>Decided</span>${escapeHtml(record.decidedAt)}</div>
+      <div class="meta-item"><span>Channel</span>#${escapeHtml(channelName)}</div>
+      <div class="meta-item"><span>Messages</span>${messages.length}${omittedCount ? ` shown • ${omittedCount} omitted` : ''}</div>
+    </div>${reason}
+  </section>
+  <section class="transcript">
+    <div class="transcript-title"><h2>Conversation transcript</h2><span class="count">Oldest to newest</span></div>
+    ${omittedCount ? `<div class="omitted">${omittedCount} older messages were omitted to keep the archive within Discord's upload limit.</div>` : ''}
+    ${messageHtml || '<div class="omitted">No messages were found.</div>'}
+  </section>
+  <footer>Generated by Legion Roleplay Applications • ${escapeHtml(new Date().toISOString())}</footer>
+</main></body></html>`;
 }
 
 async function createTranscript(guild, record, config) {
@@ -455,31 +540,28 @@ async function createTranscript(guild, record, config) {
   const transcriptChannel = await guild.channels.fetch(record.transcriptChannelId ?? config.transcriptChannelId);
   if (!applicationChannel?.isTextBased() || !transcriptChannel?.isTextBased()) throw new Error('Application or transcript channel is unavailable.');
   const messages = await fetchChannelMessages(applicationChannel);
-  const header = [
-    `Application transcript: ${record.id}`,
-    `Server: ${record.guildName} (${record.guildId})`,
-    `Applicant: ${record.username} (${record.userId})`,
-    `Position: ${record.positionName}`,
-    `Decision: ${record.status}`,
-    `Reviewed by: ${record.decidedBy}`,
-    `Submitted: ${record.createdAt}`,
-    `Decided: ${record.decidedAt}`,
-    record.denialReason ? `Reason: ${record.denialReason}` : null,
-    '',
-    '--- Channel messages ---',
-    '',
-  ].filter((line) => line !== null);
-  let text = [...header, ...messages.map(messageTranscriptLine)].join('\n\n');
+  let includedMessages = messages;
+  let omittedCount = 0;
   const maxBytes = 7_500_000;
-  if (Buffer.byteLength(text, 'utf8') > maxBytes) text = `${text.slice(0, maxBytes)}\n\n[Transcript truncated at 7.5 MB]`;
-  const file = new AttachmentBuilder(Buffer.from(text, 'utf8'), { name: `transcript-${record.id}.txt` });
+  let html = buildTranscriptHtml(record, includedMessages, applicationChannel.name, omittedCount);
+  while (Buffer.byteLength(html, 'utf8') > maxBytes && includedMessages.length > 1) {
+    const removeCount = Math.max(1, Math.ceil(includedMessages.length * 0.1));
+    includedMessages = includedMessages.slice(removeCount);
+    omittedCount += removeCount;
+    html = buildTranscriptHtml(record, includedMessages, applicationChannel.name, omittedCount);
+  }
+  if (Buffer.byteLength(html, 'utf8') > maxBytes) throw new Error('Transcript is too large to upload safely.');
+  const file = new AttachmentBuilder(Buffer.from(html, 'utf8'), { name: `transcript-${record.id}.html` });
   const embed = new EmbedBuilder()
     .setColor(record.status === 'approved' ? '#57F287' : '#ED4245')
     .setTitle(`${record.positionName} — ${record.status.toUpperCase()}`)
-    .setDescription(`Application **${record.id}** from <@${record.userId}>`)
+    .setDescription(`Archived application **${record.id}** from <@${record.userId}>`)
     .addFields(
+      { name: 'Applicant', value: `<@${record.userId}>`, inline: true },
       { name: 'Reviewer', value: `<@${record.decidedBy}>`, inline: true },
-      { name: 'Messages', value: String(messages.length), inline: true },
+      { name: 'Messages', value: omittedCount ? `${includedMessages.length} archived (${omittedCount} omitted)` : String(messages.length), inline: true },
+      { name: 'Submitted', value: `<t:${Math.floor(new Date(record.createdAt).getTime() / 1000)}:f>`, inline: true },
+      { name: 'Decided', value: `<t:${Math.floor(new Date(record.decidedAt).getTime() / 1000)}:f>`, inline: true },
     )
     .setTimestamp(new Date(record.decidedAt));
   if (record.denialReason) embed.addFields({ name: 'Reason', value: truncate(record.denialReason, 1024) });
@@ -651,19 +733,23 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     await submitApplication(interaction, config, session, position);
   }
 
-  async function transcriptAndClose(record, config) {
-    const guild = await client.guilds.fetch(record.guildId);
-    const channel = await createTranscript(guild, record, config);
-    await channel.send({
-      embeds: [new EmbedBuilder()
-        .setColor(record.status === 'approved' ? '#57F287' : '#ED4245')
-        .setTitle(`Application ${record.status === 'approved' ? 'Approved' : 'Denied'}`)
-        .setDescription('A transcript has been saved. This channel is now locked.')],
-    });
-    await Promise.all([
-      ...config.reviewerRoleIds.map((roleId) => channel.permissionOverwrites.edit(roleId, { SendMessages: false, AddReactions: false })),
-    ]);
-    await channel.setName(`closed-${record.id.toLowerCase()}`, `Application ${record.id} ${record.status}`).catch(() => {});
+  async function finalizeApplicationChannel(interaction, record, config, decisionMessage) {
+    let channel;
+    try {
+      const guild = await client.guilds.fetch(record.guildId);
+      channel = await createTranscript(guild, record, config);
+    } catch (error) {
+      logger.error(`Transcript failed for ${record.id}:`, error);
+      await interaction.editReply({ content: `${decisionMessage} The transcript failed, so the application channel was not deleted. Check the bot logs.` });
+      return;
+    }
+    await interaction.editReply({ content: `${decisionMessage} Transcript saved. This application channel will now be deleted.` });
+    try {
+      await channel.delete(`Application ${record.id} ${record.status}; transcript archived`);
+    } catch (error) {
+      logger.error(`Channel deletion failed for ${record.id}:`, error);
+      await interaction.editReply({ content: `${decisionMessage} The transcript was saved, but channel deletion failed. Check the bot logs.` });
+    }
   }
 
   async function approve(interaction, config, record) {
@@ -675,14 +761,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       decidedBy: interaction.user.id,
     });
     await interaction.message.edit(reviewPayload(updated, config));
-    let transcriptNote = ' Transcript saved and the application channel was locked.';
-    try {
-      await transcriptAndClose(updated, config);
-    } catch (error) {
-      logger.error(`Transcript failed for ${record.id}:`, error);
-      transcriptNote = ' The decision was saved, but the transcript failed; the application channel was left open. Check the bot logs.';
-    }
-    await interaction.editReply({ content: `Approved **${record.id}** and granted <@&${record.roleId}>.${transcriptNote}` });
+    await finalizeApplicationChannel(interaction, updated, config, `Approved **${record.id}** and granted <@&${record.roleId}>.`);
     notifyApplicant(client, updated).catch((error) => logger.warn('Could not DM approved applicant:', error.message));
   }
 
@@ -696,14 +775,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     const channel = await interaction.guild.channels.fetch(record.reviewChannelId);
     const message = await channel.messages.fetch(record.reviewMessageId);
     await message.edit(reviewPayload(updated, config));
-    let transcriptNote = ' Transcript saved and the application channel was locked.';
-    try {
-      await transcriptAndClose(updated, config);
-    } catch (error) {
-      logger.error(`Transcript failed for ${record.id}:`, error);
-      transcriptNote = ' The decision was saved, but the transcript failed; the application channel was left open. Check the bot logs.';
-    }
-    await interaction.editReply({ content: `Denied application **${record.id}**.${transcriptNote}` });
+    await finalizeApplicationChannel(interaction, updated, config, `Denied application **${record.id}**.`);
     notifyApplicant(client, updated).catch((error) => logger.warn('Could not DM denied applicant:', error.message));
   }
 

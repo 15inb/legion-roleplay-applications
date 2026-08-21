@@ -175,9 +175,11 @@ The bot sends the message by DM without exposing the staff member's identity. Wh
 When staff approve or deny the application, the bot:
 
 1. Saves the decision.
-2. Generates a timestamped text transcript of up to 1,000 channel messages, embeds, and attachment links.
+2. Generates a polished, self-contained HTML transcript of up to 1,000 channel messages, embeds, attachment links, and image previews.
 3. Uploads it to the transcript channel selected in `/setup`.
-4. Locks the application channel and renames it with a `closed-` prefix.
+4. Permanently deletes the private application channel.
+
+The archive is saved before deletion. If transcript generation or upload fails, the bot keeps the application channel and tells the reviewer to check the logs, preventing the conversation from being lost. If an unusually large transcript exceeds Discord's upload limit, the oldest messages are omitted in safe chunks and the transcript clearly records how many were omitted.
 
 The bot needs **View Channels**, **Send Messages**, **Embed Links**, **Attach Files**, **Read Message History**, **Add Reactions**, **Manage Channels**, **Manage Messages**, and **Manage Roles**. Its role must remain above every role it grants.
 
@@ -193,4 +195,4 @@ Removing a reaction removes the role. Custom server emoji mentions are supported
 
 ## Data and privacy
 
-Answers are posted only in private application channels and saved locally in `data/applications.json`. Transcripts are sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.
+Answers are posted only in private application channels and saved locally in `data/applications.json`. After a decision, the channel is permanently deleted and its HTML transcript is sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.

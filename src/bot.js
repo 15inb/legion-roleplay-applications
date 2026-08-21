@@ -7,7 +7,6 @@ import {
   ChannelSelectMenuBuilder,
   ChannelType,
   EmbedBuilder,
-  LabelBuilder,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
@@ -18,8 +17,7 @@ import {
 } from 'discord.js';
 import { handleReactionRoleCommand } from './reaction-roles.js';
 
-const SESSION_LIFETIME_MS = 30 * 60 * 1000;
-const QUESTIONS_PER_PAGE = 5;
+const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const CONFIG_QUESTIONS_PER_PAGE = 20;
 
 function ephemeral(content, extra = {}) {
@@ -368,27 +366,23 @@ function questionFromModal(interaction, existingQuestion, currentQuestions) {
   return { id, label, style, required: requiredText === 'yes', minLength, maxLength, ...(placeholder ? { placeholder } : {}) };
 }
 
-function modalFor(session, position, page) {
-  const questions = position.questions.slice(page * QUESTIONS_PER_PAGE, (page + 1) * QUESTIONS_PER_PAGE);
-  const pageCount = Math.ceil(position.questions.length / QUESTIONS_PER_PAGE);
-  const modal = new ModalBuilder()
-    .setCustomId(`application:modal:${session.token}:${page}`)
-    .setTitle(truncate(`${position.name} (${page + 1}/${pageCount})`, 45));
-
-  for (const [index, question] of questions.entries()) {
-    const input = new TextInputBuilder()
-      .setCustomId(question.id)
-      .setStyle(question.style === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short)
-      .setRequired(question.required)
-      .setMinLength(question.minLength ?? 0)
-      .setMaxLength(question.maxLength ?? (question.style === 'short' ? 400 : 4000));
-    if (question.placeholder) input.setPlaceholder(question.placeholder);
-    const label = new LabelBuilder().setTextInputComponent(input);
-    if (question.label.length <= 45) label.setLabel(question.label);
-    else label.setLabel(`Question ${page * QUESTIONS_PER_PAGE + index + 1}`).setDescription(question.label);
-    modal.addLabelComponents(label);
-  }
-  return modal;
+export function dmQuestionPayload(session) {
+  const question = session.position.questions[session.questionIndex];
+  const minimum = question.minLength ?? 0;
+  const maximum = question.maxLength ?? (question.style === 'short' ? 400 : 4000);
+  const requirements = [
+    question.required ? 'Required' : 'Optional',
+    minimum ? `${minimum}-${maximum} characters` : `Up to ${maximum} characters`,
+  ].join(' • ');
+  const embed = new EmbedBuilder()
+    .setColor(session.config.panel.color)
+    .setAuthor({ name: session.guildName })
+    .setTitle(`${session.position.name} • Question ${session.questionIndex + 1}/${session.position.questions.length}`)
+    .setDescription(question.label)
+    .addFields({ name: 'Answer requirements', value: requirements })
+    .setFooter({ text: 'Reply directly to this DM • Type “back” to revise • Type “cancel” to stop' });
+  if (question.placeholder) embed.addFields({ name: 'Example', value: question.placeholder });
+  return { embeds: [embed], allowedMentions: { parse: [] } };
 }
 
 function reviewPayload(record, config) {
@@ -724,7 +718,12 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
 
   function cleanSessions() {
     const cutoff = Date.now() - SESSION_LIFETIME_MS;
-    for (const [token, session] of sessions) if (session.createdAt < cutoff) sessions.delete(token);
+    for (const [token, session] of sessions) if (session.updatedAt < cutoff) sessions.delete(token);
+  }
+
+  function sessionForUser(userId) {
+    cleanSessions();
+    return [...sessions.values()].find((session) => session.userId === userId);
   }
 
   function isReviewer(interaction, config) {
@@ -752,28 +751,53 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/setup`.'));
       return;
     }
-    cleanSessions();
+    if (sessionForUser(interaction.user.id)) {
+      await interaction.reply(ephemeral('You already have an unfinished application interview in your DMs. Finish it or type `cancel` there before starting another.'));
+      return;
+    }
     const token = crypto.randomBytes(9).toString('base64url');
     const session = {
       token,
       userId: interaction.user.id,
       guildId: interaction.guildId,
+      guildName: interaction.guild?.name ?? 'Discord server',
       positionId,
       position: structuredClone(position),
+      config: structuredClone(config),
       answers: {},
+      questionIndex: 0,
       createdAt: Date.now(),
+      updatedAt: Date.now(),
+      processing: false,
     };
     sessions.set(token, session);
-    await interaction.showModal(modalFor(session, position, 0));
+    try {
+      await interaction.user.send(dmQuestionPayload(session));
+    } catch (error) {
+      sessions.delete(token);
+      logger.warn(`Could not start DM application for ${interaction.user.id}:`, error.message);
+      await interaction.reply(ephemeral('I could not DM you. Enable direct messages from server members, then press the application button again.'));
+      return;
+    }
+    await interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('Application Started in DMs')
+        .setDescription(`I sent you the first **${position.name}** question. Reply to the bot's DM to continue through all ${position.questions.length} questions.`)
+        .setFooter({ text: 'Your answers remain private from other applicants.' })],
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
-  async function submitApplication(interaction, config, session, position) {
+  async function submitApplicationFromDm(message, session) {
+    const { config, position } = session;
+    const guild = await client.guilds.fetch(session.guildId);
     const record = {
       id: crypto.randomUUID().replaceAll('-', '').slice(0, 10).toUpperCase(),
-      guildId: interaction.guildId,
-      guildName: interaction.guild.name,
-      userId: interaction.user.id,
-      username: interaction.user.tag,
+      guildId: session.guildId,
+      guildName: guild.name,
+      userId: message.author.id,
+      username: message.author.tag,
       positionId: position.id,
       positionName: position.name,
       roleId: position.roleId,
@@ -785,7 +809,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       decidedBy: null,
     };
 
-    const safeName = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'applicant';
+    const safeName = message.author.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'applicant';
     const staffPermissions = [
       PermissionFlagsBits.ViewChannel,
       PermissionFlagsBits.SendMessages,
@@ -793,13 +817,13 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       PermissionFlagsBits.AttachFiles,
       PermissionFlagsBits.EmbedLinks,
     ];
-    const reviewChannel = await interaction.guild.channels.create({
+    const reviewChannel = await guild.channels.create({
       name: `application-${safeName}-${record.id.toLowerCase()}`,
       type: ChannelType.GuildText,
       parent: config.applicationCategoryId,
-      topic: `${position.name} • ${interaction.user.tag} • ${record.id}`,
+      topic: `${position.name} • ${message.author.tag} • ${record.id}`,
       permissionOverwrites: [
-        { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
         ...config.reviewerRoleIds.map((roleId) => ({ id: roleId, allow: staffPermissions })),
         {
           id: client.user.id,
@@ -820,49 +844,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     }
     await store.create(record);
     sessions.delete(session.token);
-    await interaction.reply({
-      embeds: [new EmbedBuilder()
-        .setColor('#57F287')
-        .setTitle('Application Submitted')
-        .setDescription('Staff will contact you by DM if they need more information. You will also receive a DM when a decision is made.')
-        .addFields({ name: 'Application ID', value: record.id, inline: true })],
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  async function handleModalPage(interaction, config, token, page) {
-    const session = sessions.get(token);
-    if (!session || session.userId !== interaction.user.id || session.guildId !== interaction.guildId) {
-      await interaction.reply(ephemeral('This application session expired. Run `/apply` to start again.'));
-      return;
-    }
-    const position = session.position;
-    if (!position) {
-      sessions.delete(token);
-      await interaction.reply(ephemeral('That position is no longer available.'));
-      return;
-    }
-    const pageQuestions = position.questions.slice(page * QUESTIONS_PER_PAGE, (page + 1) * QUESTIONS_PER_PAGE);
-    for (const question of pageQuestions) session.answers[question.id] = interaction.fields.getTextInputValue(question.id);
-    const nextPage = page + 1;
-    const pageCount = Math.ceil(position.questions.length / QUESTIONS_PER_PAGE);
-    if (nextPage < pageCount) {
-      const nextPageQuestions = Math.min(QUESTIONS_PER_PAGE, position.questions.length - nextPage * QUESTIONS_PER_PAGE);
-      const button = new ButtonBuilder()
-        .setCustomId(`application:continue:${token}:${nextPage}`)
-        .setLabel(`Continue to ${nextPageQuestions} more question${nextPageQuestions === 1 ? '' : 's'}`)
-        .setStyle(ButtonStyle.Primary);
-      await interaction.reply({
-        embeds: [new EmbedBuilder()
-          .setColor(config.panel.color)
-          .setTitle(`Page ${page + 1} of ${pageCount} saved`)
-          .setDescription('Your answers are saved privately. Discord forms support five questions at a time, so use the button below to open the next page.')],
-        components: [new ActionRowBuilder().addComponents(button)],
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    await submitApplication(interaction, config, session, position);
+    return record;
   }
 
   async function finalizeApplicationChannel(interaction, record, config, decisionMessage) {
@@ -1287,24 +1269,6 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
         return;
       }
 
-      if (interaction.isButton() && interaction.customId.startsWith('application:continue:')) {
-        const [, , token, pageText] = interaction.customId.split(':');
-        const session = sessions.get(token);
-        const position = session?.position;
-        if (!session || session.userId !== interaction.user.id || !position) {
-          await interaction.reply(ephemeral('This application session expired. Run `/apply` to start again.'));
-          return;
-        }
-        await interaction.showModal(modalFor(session, position, Number(pageText)));
-        return;
-      }
-
-      if (interaction.isModalSubmit() && interaction.customId.startsWith('application:modal:')) {
-        const [, , token, pageText] = interaction.customId.split(':');
-        await handleModalPage(interaction, config, token, Number(pageText));
-        return;
-      }
-
       if (interaction.isButton() && /^application:(approve|deny):/.test(interaction.customId)) {
         if (!isReviewer(interaction, config)) {
           await interaction.reply(ephemeral('You do not have permission to review applications.'));
@@ -1380,6 +1344,108 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
   client.on('messageCreate', async (message) => {
     if (message.author.bot || message.guild) return;
     try {
+      const session = sessionForUser(message.author.id);
+      if (session) {
+        if (session.processing) {
+          await message.reply({
+            embeds: [new EmbedBuilder()
+              .setColor('#FEE75C')
+              .setTitle('Please Wait')
+              .setDescription('I am still saving your previous answer.')],
+          });
+          return;
+        }
+        session.processing = true;
+        try {
+          const command = message.content.trim().toLowerCase();
+          if (command === 'cancel') {
+            sessions.delete(session.token);
+            await message.reply({
+              embeds: [new EmbedBuilder()
+                .setColor('#ED4245')
+                .setTitle('Application Cancelled')
+                .setDescription(`Your unfinished **${session.position.name}** application was discarded.`)],
+            });
+            return;
+          }
+          if (command === 'back') {
+            if (session.questionIndex === 0) {
+              await message.reply({
+                embeds: [new EmbedBuilder()
+                  .setColor('#FEE75C')
+                  .setTitle('Already at the First Question')
+                  .setDescription('Reply with your answer, or type `cancel` to stop.')],
+              });
+              return;
+            }
+            session.questionIndex -= 1;
+            delete session.answers[session.position.questions[session.questionIndex].id];
+            session.updatedAt = Date.now();
+            await message.reply(dmQuestionPayload(session));
+            return;
+          }
+
+          const question = session.position.questions[session.questionIndex];
+          const attachmentLines = [...message.attachments.values()].map((attachment) => `[Attachment: ${attachment.name}](${attachment.url})`);
+          const answer = [message.content.trim() || null, ...attachmentLines].filter(Boolean).join('\n');
+          const minimum = question.minLength ?? 0;
+          const maximum = question.maxLength ?? (question.style === 'short' ? 400 : 4000);
+          if (!answer && question.required) {
+            await message.reply({
+              embeds: [new EmbedBuilder().setColor('#ED4245').setTitle('Answer Required').setDescription('Please reply with an answer to continue.')],
+            });
+            return;
+          }
+          if (answer && answer.length < minimum) {
+            await message.reply({
+              embeds: [new EmbedBuilder().setColor('#ED4245').setTitle('Answer Too Short').setDescription(`Please use at least ${minimum} characters. Your answer has ${answer.length}.`)],
+            });
+            return;
+          }
+          if (answer.length > maximum) {
+            await message.reply({
+              embeds: [new EmbedBuilder().setColor('#ED4245').setTitle('Answer Too Long').setDescription(`Please use no more than ${maximum} characters. Your answer has ${answer.length}.`)],
+            });
+            return;
+          }
+
+          session.answers[question.id] = answer;
+          session.updatedAt = Date.now();
+          if (session.questionIndex + 1 < session.position.questions.length) {
+            session.questionIndex += 1;
+            try {
+              await message.reply(dmQuestionPayload(session));
+            } catch (error) {
+              session.questionIndex -= 1;
+              delete session.answers[question.id];
+              throw error;
+            }
+            return;
+          }
+
+          const record = await submitApplicationFromDm(message, session);
+          await message.reply({
+            embeds: [new EmbedBuilder()
+              .setColor('#57F287')
+              .setTitle('Application Submitted')
+              .setDescription('Your answers were sent privately to the review team. Staff can contact you through this DM if they need more information, and you will receive the final decision here.')
+              .addFields({ name: 'Application', value: record.positionName, inline: true }, { name: 'Application ID', value: record.id, inline: true })],
+          }).catch((error) => logger.warn(`Application ${record.id} was submitted, but its confirmation DM failed:`, error.message));
+          return;
+        } catch (error) {
+          logger.error(`Could not process DM application for ${message.author.id}:`, error);
+          await message.reply({
+            embeds: [new EmbedBuilder()
+              .setColor('#ED4245')
+              .setTitle('Answer Not Saved')
+              .setDescription('Something went wrong while saving your answer. Your interview is still open; please try sending the answer again.')],
+          }).catch(() => {});
+          return;
+        } finally {
+          session.processing = false;
+        }
+      }
+
       const record = await store.latestPendingForUser(message.author.id);
       if (!record) {
         await message.reply({

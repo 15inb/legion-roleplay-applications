@@ -64,14 +64,15 @@ test('HTML transcripts are readable, complete, and escape untrusted content', ()
   assert.ok(!html.includes('<script>'));
 });
 
-test('long Legion questions render in modal label descriptions without truncation', async () => {
+test('application interviews begin in DMs with the full question text', async () => {
   const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
   config.reviewerRoleIds = ['123456789012345678'];
   config.applicationCategoryId = '123456789012345678';
   config.transcriptChannelId = '123456789012345678';
   config.positions[0].roleId = '123456789012345678';
   let handler;
-  let modal;
+  let dm;
+  let response;
   const client = { on: (event, callback) => { if (event === 'interactionCreate') handler = callback; } };
   attachBotHandlers(client, {
     configService: { get: async () => config },
@@ -81,21 +82,22 @@ test('long Legion questions render in modal label descriptions without truncatio
   const interaction = {
     customId: 'application:position',
     values: ['legionnaire-application'],
-    user: { id: 'user' },
+    user: { id: 'user', send: async (payload) => { dm = payload; } },
     guildId: 'guild',
+    guild: { name: 'Test Guild' },
     inGuild: () => true,
     isMessageComponent: () => true,
     isModalSubmit: () => false,
     isChatInputCommand: () => false,
     isStringSelectMenu: () => true,
-    showModal: async (value) => { modal = value; },
+    reply: async (payload) => { response = payload; },
   };
 
   await handler(interaction);
-  const payload = modal.toJSON();
-  assert.equal(payload.components.length, 5);
-  assert.equal(payload.components[1].description, config.positions[0].questions[1].label);
-  assert.equal(payload.components[3].description, config.positions[0].questions[3].label);
+  assert.equal(dm.embeds[0].data.description, config.positions[0].questions[0].label);
+  assert.match(dm.embeds[0].data.title, /Question 1\/8/);
+  assert.match(dm.embeds[0].data.footer.text, /Type “back”/);
+  assert.match(response.embeds[0].data.title, /Application Started in DMs/);
 });
 
 test('application setup renders reviewer, category, transcript, and position controls', async () => {
@@ -141,7 +143,8 @@ test('application panels create one direct button for each selected application'
   let picker;
   let panel;
   let confirmation;
-  let directModal;
+  let directDm;
+  let directResponse;
   const channel = { isTextBased: () => true, send: async (payload) => { panel = payload; } };
   const client = { on: (event, callback) => { if (event === 'interactionCreate') handler = callback; } };
   attachBotHandlers(client, {
@@ -186,17 +189,19 @@ test('application panels create one direct button for each selected application'
 
   await handler({
     customId: 'application:start:officer-application',
-    user: { id: 'applicant' },
+    user: { id: 'applicant', send: async (payload) => { directDm = payload; } },
     guildId: 'guild',
+    guild: { name: 'Test Guild' },
     inGuild: () => true,
     isMessageComponent: () => true,
     isModalSubmit: () => false,
     isChatInputCommand: () => false,
     isStringSelectMenu: () => false,
     isButton: () => true,
-    showModal: async (value) => { directModal = value; },
+    reply: async (payload) => { directResponse = payload; },
   });
-  assert.match(directModal.data.title, /Officer Application/);
+  assert.match(directDm.embeds[0].data.title, /Officer Application/);
+  assert.match(directResponse.embeds[0].data.title, /Application Started in DMs/);
 });
 
 test('a completed application creates and stores a private review channel', async () => {
@@ -205,18 +210,27 @@ test('a completed application creates and stores a private review channel', asyn
   config.applicationCategoryId = '223456789012345678';
   config.transcriptChannelId = '323456789012345678';
   config.positions[0].roleId = '423456789012345678';
-  let handler;
-  let modal;
+  const handlers = {};
   let channelOptions;
   let stored;
+  let startResponse;
+  const dmMessages = [];
   const channelMessages = [];
   const reviewChannel = {
     id: '523456789012345678',
     send: async (payload) => { channelMessages.push(payload); return { id: '623456789012345678' }; },
   };
+  const guild = {
+    name: 'Test Guild',
+    roles: { everyone: { id: '823456789012345678' } },
+    channels: {
+      create: async (options) => { channelOptions = options; return reviewChannel; },
+    },
+  };
   const client = {
     user: { id: '723456789012345678' },
-    on: (event, callback) => { if (event === 'interactionCreate') handler = callback; },
+    guilds: { fetch: async () => guild },
+    on: (event, callback) => { handlers[event] = callback; },
   };
   attachBotHandlers(client, {
     configService: { get: async () => config },
@@ -226,58 +240,50 @@ test('a completed application creates and stores a private review channel', asyn
     },
     logger: console,
   });
+  const applicant = {
+    bot: false,
+    id: '923456789012345678',
+    username: 'Test Applicant',
+    tag: 'test-applicant',
+    send: async (payload) => { dmMessages.push(payload); },
+  };
   const common = {
     guildId: '823456789012345678',
-    user: { id: '923456789012345678', username: 'Test Applicant', tag: 'test-applicant' },
-    guild: {
-      name: 'Test Guild',
-      roles: { everyone: { id: '823456789012345678' } },
-      channels: {
-        create: async (options) => { channelOptions = options; return reviewChannel; },
-      },
-    },
+    user: applicant,
+    guild,
     inGuild: () => true,
     isChatInputCommand: () => false,
     isButton: () => false,
     isRoleSelectMenu: () => false,
     isChannelSelectMenu: () => false,
   };
-  await handler({
+  await handlers.interactionCreate({
     ...common,
     customId: 'application:position',
     values: ['legionnaire-application'],
     isMessageComponent: () => true,
     isModalSubmit: () => false,
     isStringSelectMenu: () => true,
-    showModal: async (value) => { modal = value; },
+    reply: async (payload) => { startResponse = payload; },
   });
-  const token = modal.data.custom_id.split(':')[2];
-  const replies = [];
-  const submitPage = async (page) => handler({
-    ...common,
-    customId: `application:modal:${token}:${page}`,
-    isMessageComponent: () => false,
-    isModalSubmit: () => true,
-    isStringSelectMenu: () => false,
-    fields: { getTextInputValue: (id) => `Answer for ${id}` },
-    reply: async (payload) => { replies.push(payload); },
-  });
-  await submitPage(0);
-  assert.equal(replies.length, 1);
-  assert.match(replies[0].embeds[0].data.title, /Page 1 of 2 saved/);
-  assert.match(replies[0].components[0].components[0].data.label, /3 more questions/);
-  let finalModal;
-  await handler({
-    ...common,
-    customId: `application:continue:${token}:1`,
-    isMessageComponent: () => true,
-    isModalSubmit: () => false,
-    isStringSelectMenu: () => false,
-    isButton: () => true,
-    showModal: async (value) => { finalModal = value; },
-  });
-  assert.match(finalModal.data.custom_id, /:1$/);
-  await submitPage(1);
+  assert.match(startResponse.embeds[0].data.title, /Application Started in DMs/);
+  assert.match(dmMessages[0].embeds[0].data.title, /Question 1\/8/);
+
+  const answerReplies = [];
+  for (const [index, question] of config.positions[0].questions.entries()) {
+    await handlers.messageCreate({
+      author: applicant,
+      guild: null,
+      content: `Answer for ${question.id}`,
+      attachments: new Map(),
+      createdAt: new Date('2026-08-21T12:00:00Z'),
+      reply: async (payload) => { answerReplies.push(payload); },
+    });
+    if (index < config.positions[0].questions.length - 1) {
+      assert.match(answerReplies[index].embeds[0].data.title, new RegExp(`Question ${index + 2}\\/8`));
+    }
+  }
+  assert.match(answerReplies.at(-1).embeds[0].data.title, /Application Submitted/);
 
   assert.equal(channelOptions.parent, config.applicationCategoryId);
   assert.match(channelOptions.name, /^application-test-applicant-/);
@@ -286,7 +292,7 @@ test('a completed application creates and stores a private review channel', asyn
   assert.equal(stored.reviewChannelId, reviewChannel.id);
   assert.equal(stored.transcriptChannelId, config.transcriptChannelId);
   assert.equal(stored.answers.length, 8);
-  assert.equal(replies.length, 2);
+  assert.equal(stored.answers[7].value, 'Answer for acceptance-reason');
   assert.ok(channelMessages.slice(1).some((payload) => payload.embeds?.[0]?.data?.title === 'Question 1'));
   assert.ok(channelMessages.every((payload) => !payload.files));
 });

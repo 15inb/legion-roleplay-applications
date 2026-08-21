@@ -4,8 +4,8 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 
 ## Features
 
-- Private application flow using slash commands, select menus, and paged modals
-- Any number of questions (Discord displays them in pages of five)
+- Private application interviews conducted one question at a time through bot DMs
+- Any number of questions without Discord's five-input modal limit
 - Multiple independently configured positions
 - Staff-only Approve and Deny controls
 - Automatic Discord role assignment on approval
@@ -13,7 +13,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Staff-to-applicant DM messaging with applicant replies relayed back to staff
 - Decision transcripts archived to a configured channel
 - Persistent reaction-role panels
-- Required denial reasons and optional applicant DMs
+- Required denial reasons and applicant decision DMs
 - Persistent application history stored in `data/applications.json`
 - `/status` for applicants
 - `/panel` for server managers
@@ -26,7 +26,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and create an application.
 2. On **Bot**, create the bot and reset/copy its token.
-3. Enable **Message Content Intent** on the Bot page. It is required to include staff/applicant conversation in transcripts.
+3. Enable **Message Content Intent** on the Bot page. It is required to receive application answers and staff/applicant conversations through DMs.
 4. Copy `.env.example` to `.env` and add the token, application ID, and server ID.
 
 Never commit or share `.env`. If a token is exposed, reset it in the Developer Portal immediately.
@@ -137,7 +137,7 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 
 ## Commands
 
-- `/apply` — choose a position and start an application
+- `/apply` — choose a position and start its private DM interview
 - `/status` — view the latest application status
 - `/panel` — choose one or more applications and post a direct button for each one (Manage Server required)
 - `/setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
@@ -162,9 +162,9 @@ Changes are saved to the bot's private `data/settings.json` runtime file and app
 
 ## Private channels and transcripts
 
-After the final form page is submitted, the bot creates a channel under the category selected in `/setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original questions and answers are posted as numbered embeds with the staff review controls.
+Pressing an application button starts a private DM interview with the bot. Questions are sent one at a time, and each DM reply automatically advances to the next question. Applicants can type `back` to revise their previous answer or `cancel` to discard the unfinished interview. Answers are checked against the required and character-limit settings configured through `/questions`. An unfinished interview expires after 24 hours of inactivity or when the bot restarts.
 
-Discord allows at most five components in one modal and does not allow a bot to open another modal directly from a modal submission. Applications with more than five questions therefore use a private, ephemeral progress message with one Continue button between pages. The direct application panel buttons still skip the old duplicate position-selection step.
+After the final DM answer is submitted, the bot creates a channel under the category selected in `/setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original questions and answers are posted as numbered embeds with the staff review controls.
 
 To contact the applicant, a reviewer runs this inside the application channel:
 

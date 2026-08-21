@@ -11,4 +11,8 @@ export const commands = [
     .setName('application-panel')
     .setDescription('Post the application panel in this channel.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName('application-config')
+    .setDescription('Manage application questions from Discord.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 ].map((command) => command.toJSON());

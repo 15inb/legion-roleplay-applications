@@ -13,6 +13,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Persistent application history stored in `data/applications.json`
 - `/application-status` for applicants
 - `/application-panel` for server managers
+- `/application-config` question manager for server managers
 - Live config reload: changes apply the next time somebody interacts with the bot
 - Docker Compose and systemd deployment options
 
@@ -25,7 +26,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 
 Never commit or share `.env`. If a token is exposed, reset it in the Developer Portal immediately.
 
-## 2. Configure applications
+## 2. Configure positions
 
 Edit `config/applications.json`. Replace every `PUT_..._HERE` value with a real Discord ID. Enable Discord Developer Mode under **User Settings → Advanced**, then right-click a server, channel, or role and choose **Copy ID**.
 
@@ -50,6 +51,8 @@ Each position has this shape:
   ]
 }
 ```
+
+The JSON file is primarily needed for the initial position, role, and review-channel setup. After the bot is running, use `/application-config` in Discord to manage questions without editing this file.
 
 Question options:
 
@@ -84,7 +87,8 @@ The bot registers its guild slash commands at startup. Use `/application-panel` 
 git clone YOUR_GITHUB_REPOSITORY_URL roleplay-applications
 cd roleplay-applications
 cp .env.example .env
-# Edit .env and config/applications.json
+# Edit .env and set up position/channel/role IDs in config/applications.json
+sudo chown -R 1000:1000 config data
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -113,6 +117,19 @@ sudo journalctl -u roleplay-applications -f
 - `/apply` — choose a position and start an application
 - `/application-status` — view the latest application status
 - `/application-panel` — post the permanent Apply button (Manage Server required)
+- `/application-config` — add, edit, reorder, or delete questions using a private Discord control panel (Manage Server required)
+
+## Managing questions from Discord
+
+Run `/application-config`, then choose a position. The private manager lets you:
+
+- Add a question with a Discord modal
+- Edit its wording, answer type, required status, limits, and placeholder
+- Move it up or down
+- Delete it after a confirmation step
+- Navigate large question lists in pages
+
+Changes are saved to `config/applications.json` and apply immediately to newly started applications. In-progress applications keep the question version they started with. A position must always retain at least one question.
 
 ## Data and privacy
 

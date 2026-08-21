@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const SNOWFLAKE_OR_PLACEHOLDER = /^(?:\d{17,20}|PUT_[A-Z0-9_]+_HERE)$/;
@@ -65,6 +65,7 @@ export class ConfigService {
     this.filePath = filePath;
     this.cached = null;
     this.modifiedAt = 0;
+    this.writeQueue = Promise.resolve();
   }
 
   async get(options) {
@@ -75,5 +76,22 @@ export class ConfigService {
       this.modifiedAt = details.mtimeMs;
     }
     return this.cached;
+  }
+
+  async update(mutator) {
+    const operation = async () => {
+      const current = JSON.parse(await readFile(this.filePath, 'utf8'));
+      const next = structuredClone(current);
+      await mutator(next);
+      validateConfig(next);
+      const temporaryPath = `${this.filePath}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+      await rename(temporaryPath, this.filePath);
+      this.cached = next;
+      this.modifiedAt = (await stat(this.filePath)).mtimeMs;
+      return next;
+    };
+    this.writeQueue = this.writeQueue.then(operation, operation);
+    return this.writeQueue;
   }
 }

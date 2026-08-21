@@ -15,6 +15,7 @@ import {
 
 const SESSION_LIFETIME_MS = 30 * 60 * 1000;
 const QUESTIONS_PER_PAGE = 5;
+const CONFIG_QUESTIONS_PER_PAGE = 20;
 
 function ephemeral(content, extra = {}) {
   return { content, flags: MessageFlags.Ephemeral, ...extra };
@@ -59,6 +60,140 @@ function positionPicker(config) {
   return ephemeral('Choose the position you want to apply for:', {
     components: [new ActionRowBuilder().addComponents(menu)],
   });
+}
+
+function configPositionPicker(config, notice) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('cfg:position')
+    .setPlaceholder('Choose a position to configure')
+    .addOptions(config.positions.map((position) => ({
+      label: position.name,
+      description: `${position.questions.length} question${position.questions.length === 1 ? '' : 's'}`,
+      value: position.id,
+    })));
+  const embed = new EmbedBuilder()
+    .setColor(config.panel.color)
+    .setTitle('Application question manager')
+    .setDescription('Choose a position. You can add, edit, reorder, or delete its questions entirely from Discord.');
+  return {
+    content: notice || null,
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(menu)],
+  };
+}
+
+function configPositionView(config, position, requestedPage = 0, notice) {
+  const pageCount = Math.max(1, Math.ceil(position.questions.length / CONFIG_QUESTIONS_PER_PAGE));
+  const page = Math.max(0, Math.min(requestedPage, pageCount - 1));
+  const start = page * CONFIG_QUESTIONS_PER_PAGE;
+  const questions = position.questions.slice(start, start + CONFIG_QUESTIONS_PER_PAGE);
+  const list = questions.map((question, index) => {
+    const required = question.required ? 'required' : 'optional';
+    return `**${start + index + 1}.** ${question.label} — ${question.style}, ${required}`;
+  }).join('\n');
+  const embed = new EmbedBuilder()
+    .setColor(config.panel.color)
+    .setTitle(`${position.name}: questions`)
+    .setDescription(list || 'This position does not have any questions yet.')
+    .setFooter({ text: `Page ${page + 1}/${pageCount} • ${position.questions.length} total` });
+  const components = [];
+  if (questions.length) {
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`cfg:qselect:${position.id}:${page}`)
+        .setPlaceholder('Choose a question to manage')
+        .addOptions(questions.map((question, index) => ({
+          label: truncate(`${start + index + 1}. ${question.label}`, 100),
+          description: `${question.style} • ${question.required ? 'required' : 'optional'}`,
+          value: question.id,
+        }))),
+    ));
+  }
+  components.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`cfg:add:${position.id}:${page}`).setLabel('Add question').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`cfg:qpage:${position.id}:${page - 1}`).setLabel('Previous').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+    new ButtonBuilder().setCustomId(`cfg:qpage:${position.id}:${page + 1}`).setLabel('Next').setStyle(ButtonStyle.Secondary).setDisabled(page >= pageCount - 1),
+    new ButtonBuilder().setCustomId('cfg:positions').setLabel('Positions').setStyle(ButtonStyle.Secondary),
+  ));
+  return { content: notice || null, embeds: [embed], components };
+}
+
+function configQuestionView(config, position, question, page, confirmDelete = false) {
+  const index = position.questions.findIndex((item) => item.id === question.id);
+  const min = question.minLength ?? 0;
+  const max = question.maxLength ?? (question.style === 'short' ? 400 : 4000);
+  const embed = new EmbedBuilder()
+    .setColor(confirmDelete ? '#ED4245' : config.panel.color)
+    .setTitle(confirmDelete ? 'Delete this question?' : `Question ${index + 1}: ${question.label}`)
+    .addFields(
+      { name: 'Type', value: question.style, inline: true },
+      { name: 'Required', value: question.required ? 'Yes' : 'No', inline: true },
+      { name: 'Character limits', value: `${min}-${max}`, inline: true },
+      { name: 'Placeholder', value: question.placeholder || 'None' },
+    );
+  if (confirmDelete) embed.setDescription('This permanently removes the question for future applications. Applications already submitted are not changed.');
+  const buttons = confirmDelete
+    ? [
+        new ButtonBuilder().setCustomId(`cfg:cd:${position.id}:${question.id}:${page}`).setLabel('Confirm delete').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`cfg:x:${position.id}:${question.id}:${page}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+      ]
+    : [
+        new ButtonBuilder().setCustomId(`cfg:e:${position.id}:${question.id}:${page}`).setLabel('Edit').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`cfg:m:${position.id}:${question.id}:up:${page}`).setLabel('Move up').setStyle(ButtonStyle.Secondary).setDisabled(index === 0),
+        new ButtonBuilder().setCustomId(`cfg:m:${position.id}:${question.id}:down:${page}`).setLabel('Move down').setStyle(ButtonStyle.Secondary).setDisabled(index === position.questions.length - 1),
+        new ButtonBuilder().setCustomId(`cfg:d:${position.id}:${question.id}:${page}`).setLabel('Delete').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`cfg:qpage:${position.id}:${page}`).setLabel('Back').setStyle(ButtonStyle.Secondary),
+      ];
+  return { content: null, embeds: [embed], components: [new ActionRowBuilder().addComponents(...buttons)] };
+}
+
+function questionModal(position, question, page) {
+  const editing = Boolean(question);
+  const modal = new ModalBuilder()
+    .setCustomId(editing ? `cfg:me:${position.id}:${question.id}:${page}` : `cfg:ma:${position.id}:${page}`)
+    .setTitle(editing ? 'Edit application question' : 'Add application question');
+  const values = {
+    label: question?.label ?? '',
+    type: question?.style ?? 'paragraph',
+    required: question ? (question.required ? 'yes' : 'no') : 'yes',
+    limits: question ? `${question.minLength ?? 0}-${question.maxLength ?? (question.style === 'short' ? 400 : 4000)}` : '0-1000',
+    placeholder: question?.placeholder ?? '',
+  };
+  const labelInput = new TextInputBuilder().setCustomId('label').setLabel('Question').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(45);
+  if (values.label) labelInput.setValue(values.label);
+  const inputs = [
+    labelInput,
+    new TextInputBuilder().setCustomId('type').setLabel('Type: short or paragraph').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(9).setValue(values.type),
+    new TextInputBuilder().setCustomId('required').setLabel('Required? yes or no').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(3).setValue(values.required),
+    new TextInputBuilder().setCustomId('limits').setLabel('Character limits (example: 10-1000)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(9).setValue(values.limits),
+    new TextInputBuilder().setCustomId('placeholder').setLabel('Example/placeholder (optional)').setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100),
+  ];
+  if (values.placeholder) inputs[4].setValue(values.placeholder);
+  for (const input of inputs) modal.addComponents(new ActionRowBuilder().addComponents(input));
+  return modal;
+}
+
+function questionFromModal(interaction, existingQuestion, currentQuestions) {
+  const label = interaction.fields.getTextInputValue('label').trim();
+  const style = interaction.fields.getTextInputValue('type').trim().toLowerCase();
+  const requiredText = interaction.fields.getTextInputValue('required').trim().toLowerCase();
+  const limitsText = interaction.fields.getTextInputValue('limits').trim();
+  const placeholder = interaction.fields.getTextInputValue('placeholder').trim();
+  if (!['short', 'paragraph'].includes(style)) throw new Error('Question type must be `short` or `paragraph`.');
+  if (!['yes', 'no'].includes(requiredText)) throw new Error('Required must be `yes` or `no`.');
+  const limits = /^(\d{1,4})\s*-\s*(\d{1,4})$/.exec(limitsText);
+  if (!limits) throw new Error('Character limits must use the format `minimum-maximum`, such as `10-1000`.');
+  const minLength = Number(limits[1]);
+  const maxLength = Number(limits[2]);
+  if (minLength > maxLength || maxLength > 4000) throw new Error('Character limits must be ordered and cannot exceed 4000.');
+  let id = existingQuestion?.id;
+  if (!id) {
+    const base = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 44) || 'question';
+    id = base;
+    let suffix = 2;
+    while (currentQuestions.some((question) => question.id === id)) id = `${base.slice(0, 46)}-${suffix++}`;
+  }
+  return { id, label, style, required: requiredText === 'yes', minLength, maxLength, ...(placeholder ? { placeholder } : {}) };
 }
 
 function modalFor(session, position, page) {
@@ -148,6 +283,10 @@ export function attachBotHandlers(client, { configService, store, logger = conso
   function isReviewer(interaction, config) {
     return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
       || config.reviewerRoleIds.some((roleId) => interaction.member?.roles?.cache?.has(roleId));
+  }
+
+  function isConfigManager(interaction) {
+    return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
   }
 
   async function startApplication(interaction, config, positionId) {
@@ -267,6 +406,139 @@ export function attachBotHandlers(client, { configService, store, logger = conso
       if (!interaction.inGuild()) return;
       const config = await configService.get();
 
+      if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && interaction.customId.startsWith('cfg:')) {
+        if (!isConfigManager(interaction)) {
+          await interaction.reply(ephemeral('You need the **Manage Server** permission to change application questions.'));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId === 'cfg:positions') {
+          await interaction.update(configPositionPicker(config));
+          return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId === 'cfg:position') {
+          const position = config.positions.find((item) => item.id === interaction.values[0]);
+          if (!position) throw new Error('That position no longer exists.');
+          await interaction.update(configPositionView(config, position));
+          return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId.startsWith('cfg:qselect:')) {
+          const [, , positionId, pageText] = interaction.customId.split(':');
+          const position = config.positions.find((item) => item.id === positionId);
+          const question = position?.questions.find((item) => item.id === interaction.values[0]);
+          if (!position || !question) throw new Error('That question no longer exists.');
+          await interaction.update(configQuestionView(config, position, question, Number(pageText)));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:qpage:')) {
+          const [, , positionId, pageText] = interaction.customId.split(':');
+          const position = config.positions.find((item) => item.id === positionId);
+          if (!position) throw new Error('That position no longer exists.');
+          await interaction.update(configPositionView(config, position, Number(pageText)));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:add:')) {
+          const [, , positionId, pageText] = interaction.customId.split(':');
+          const position = config.positions.find((item) => item.id === positionId);
+          if (!position) throw new Error('That position no longer exists.');
+          await interaction.showModal(questionModal(position, null, Number(pageText)));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:e:')) {
+          const [, , positionId, questionId, pageText] = interaction.customId.split(':');
+          const position = config.positions.find((item) => item.id === positionId);
+          const question = position?.questions.find((item) => item.id === questionId);
+          if (!position || !question) throw new Error('That question no longer exists.');
+          await interaction.showModal(questionModal(position, question, Number(pageText)));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:x:')) {
+          const [, , positionId, questionId, pageText] = interaction.customId.split(':');
+          const position = config.positions.find((item) => item.id === positionId);
+          const question = position?.questions.find((item) => item.id === questionId);
+          if (!position || !question) throw new Error('That question no longer exists.');
+          await interaction.update(configQuestionView(config, position, question, Number(pageText)));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:d:')) {
+          const [, , positionId, questionId, pageText] = interaction.customId.split(':');
+          const position = config.positions.find((item) => item.id === positionId);
+          const question = position?.questions.find((item) => item.id === questionId);
+          if (!position || !question) throw new Error('That question no longer exists.');
+          if (position.questions.length === 1) {
+            await interaction.reply(ephemeral('A position must keep at least one question. Add a replacement before deleting this one.'));
+            return;
+          }
+          await interaction.update(configQuestionView(config, position, question, Number(pageText), true));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:cd:')) {
+          const [, , positionId, questionId, pageText] = interaction.customId.split(':');
+          const next = await configService.update((draft) => {
+            const position = draft.positions.find((item) => item.id === positionId);
+            if (!position || position.questions.length === 1) throw new Error('This question cannot be deleted.');
+            const index = position.questions.findIndex((item) => item.id === questionId);
+            if (index === -1) throw new Error('That question no longer exists.');
+            position.questions.splice(index, 1);
+          });
+          const position = next.positions.find((item) => item.id === positionId);
+          await interaction.update(configPositionView(next, position, Number(pageText), 'Question deleted.'));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('cfg:m:')) {
+          const [, , positionId, questionId, direction, pageText] = interaction.customId.split(':');
+          const next = await configService.update((draft) => {
+            const position = draft.positions.find((item) => item.id === positionId);
+            if (!position) throw new Error('That position no longer exists.');
+            const index = position.questions.findIndex((item) => item.id === questionId);
+            const target = direction === 'up' ? index - 1 : index + 1;
+            if (index === -1 || target < 0 || target >= position.questions.length) throw new Error('That question cannot move in that direction.');
+            [position.questions[index], position.questions[target]] = [position.questions[target], position.questions[index]];
+          });
+          const position = next.positions.find((item) => item.id === positionId);
+          const question = position.questions.find((item) => item.id === questionId);
+          const newPage = Math.floor(position.questions.indexOf(question) / CONFIG_QUESTIONS_PER_PAGE);
+          await interaction.update(configQuestionView(next, position, question, newPage));
+          return;
+        }
+
+        if (interaction.isModalSubmit() && /^cfg:m[ae]:/.test(interaction.customId)) {
+          const [operation, positionId, questionIdOrPage, editPage] = interaction.customId.slice(4).split(':');
+          const editing = operation === 'me';
+          const questionId = editing ? questionIdOrPage : null;
+          const requestedPage = Number(editing ? editPage : questionIdOrPage);
+          try {
+            const next = await configService.update((draft) => {
+              const position = draft.positions.find((item) => item.id === positionId);
+              if (!position) throw new Error('That position no longer exists.');
+              const index = editing ? position.questions.findIndex((item) => item.id === questionId) : -1;
+              if (editing && index === -1) throw new Error('That question no longer exists.');
+              const question = questionFromModal(interaction, editing ? position.questions[index] : null, position.questions);
+              if (editing) position.questions[index] = question;
+              else position.questions.push(question);
+            });
+            const position = next.positions.find((item) => item.id === positionId);
+            const page = editing ? requestedPage : Math.floor((position.questions.length - 1) / CONFIG_QUESTIONS_PER_PAGE);
+            await interaction.reply({
+              ...configPositionView(next, position, page, editing ? 'Question updated.' : 'Question added.'),
+              flags: MessageFlags.Ephemeral,
+            });
+          } catch (error) {
+            await interaction.reply(ephemeral(`Could not save the question: ${error.message}`));
+          }
+          return;
+        }
+      }
+
       if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'apply') {
           await interaction.reply(positionPicker(config));
@@ -277,6 +549,12 @@ export function attachBotHandlers(client, { configService, store, logger = conso
           if (!interaction.channel?.isTextBased()) return;
           await interaction.channel.send({ embeds: [panelEmbed(config)], components: panelComponents() });
           await interaction.reply(ephemeral('Application panel posted.'));
+        } else if (interaction.commandName === 'application-config') {
+          if (!isConfigManager(interaction)) {
+            await interaction.reply(ephemeral('You need the **Manage Server** permission to change application questions.'));
+            return;
+          }
+          await interaction.reply({ ...configPositionPicker(config), flags: MessageFlags.Ephemeral });
         }
         return;
       }

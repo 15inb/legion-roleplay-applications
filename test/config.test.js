@@ -41,3 +41,19 @@ test('ConfigService persists validated Discord-side edits', async () => {
   assert.equal(updated.positions[0].questions[0].label, 'Updated from Discord?');
   assert.equal(JSON.parse(await readFile(file, 'utf8')).positions[0].questions[0].label, 'Updated from Discord?');
 });
+
+test('ConfigService permits gradual Discord setup while placeholders remain', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'roleplay-setup-'));
+  const file = path.join(directory, 'applications.json');
+  const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
+  await writeFile(file, JSON.stringify(config), 'utf8');
+  const service = new ConfigService(file);
+
+  await service.get({ allowPlaceholders: true });
+  const partiallyConfigured = await service.update((draft) => {
+    draft.reviewerRoleIds = ['123456789012345678'];
+  }, { allowPlaceholders: true });
+
+  assert.deepEqual(partiallyConfigured.reviewerRoleIds, ['123456789012345678']);
+  assert.match(partiallyConfigured.positions[0].roleId, /^PUT_/);
+});

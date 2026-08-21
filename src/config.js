@@ -13,6 +13,7 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
   assert(config && typeof config === 'object', 'the root must be an object');
   assert(Array.isArray(config.reviewerRoleIds), 'reviewerRoleIds must be an array');
   assert(config.reviewerRoleIds.length > 0, 'at least one reviewer role is required');
+  assert(config.reviewerRoleIds.length <= 10, 'at most 10 reviewer roles are supported');
   assert(config.panel && typeof config.panel === 'object', 'panel is required');
   assert(typeof config.panel.title === 'string' && config.panel.title.length <= 256, 'panel.title must be 256 characters or fewer');
   assert(typeof config.panel.description === 'string' && config.panel.description.length <= 4000, 'panel.description must be 4000 characters or fewer');
@@ -78,12 +79,12 @@ export class ConfigService {
     return this.cached;
   }
 
-  async update(mutator) {
+  async update(mutator, options) {
     const operation = async () => {
       const current = JSON.parse(await readFile(this.filePath, 'utf8'));
       const next = structuredClone(current);
       await mutator(next);
-      validateConfig(next);
+      validateConfig(next, options);
       const temporaryPath = `${this.filePath}.tmp`;
       await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
       await rename(temporaryPath, this.filePath);

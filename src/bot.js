@@ -4,10 +4,13 @@ import {
   AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ChannelSelectMenuBuilder,
+  ChannelType,
   EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
+  RoleSelectMenuBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
@@ -19,6 +22,15 @@ const CONFIG_QUESTIONS_PER_PAGE = 20;
 
 function ephemeral(content, extra = {}) {
   return { content, flags: MessageFlags.Ephemeral, ...extra };
+}
+
+function isDiscordId(value) {
+  return /^\d{17,20}$/.test(value);
+}
+
+function configuredPositions(config) {
+  if (!config.reviewerRoleIds.length || config.reviewerRoleIds.some((id) => !isDiscordId(id))) return [];
+  return config.positions.filter((position) => isDiscordId(position.roleId) && isDiscordId(position.reviewChannelId));
 }
 
 function truncate(value, length) {
@@ -47,11 +59,15 @@ function panelComponents() {
 }
 
 function positionPicker(config) {
+  const positions = configuredPositions(config);
+  if (!positions.length) {
+    return ephemeral('Applications are not configured yet. A server manager must run `/application-setup`.');
+  }
   const menu = new StringSelectMenuBuilder()
     .setCustomId('application:position')
     .setPlaceholder('Choose a position')
     .addOptions(
-      config.positions.map((position) => ({
+      positions.map((position) => ({
         label: position.name,
         description: position.description || `Apply for ${position.name}`,
         value: position.id,
@@ -60,6 +76,128 @@ function positionPicker(config) {
   return ephemeral('Choose the position you want to apply for:', {
     components: [new ActionRowBuilder().addComponents(menu)],
   });
+}
+
+function setupMainView(config, notice) {
+  const reviewerIds = config.reviewerRoleIds.filter(isDiscordId);
+  const readyCount = configuredPositions(config).length;
+  const positionLines = config.positions.map((position) => {
+    const role = isDiscordId(position.roleId) ? `<@&${position.roleId}>` : 'role not set';
+    const channel = isDiscordId(position.reviewChannelId) ? `<#${position.reviewChannelId}>` : 'channel not set';
+    return `• **${position.name}** — ${role}, ${channel}`;
+  }).join('\n');
+  const embed = new EmbedBuilder()
+    .setColor(readyCount === config.positions.length && reviewerIds.length ? '#57F287' : '#FEE75C')
+    .setTitle('Application setup')
+    .setDescription([
+      `**Reviewer roles:** ${reviewerIds.length ? reviewerIds.map((id) => `<@&${id}>`).join(', ') : 'Not set'}`,
+      `**Ready positions:** ${readyCount}/${config.positions.length}`,
+      '',
+      positionLines,
+    ].join('\n'))
+    .setFooter({ text: 'Only members with Manage Server can use this private setup panel.' });
+  const reviewerMenu = new RoleSelectMenuBuilder()
+    .setCustomId('setup:reviewers')
+    .setPlaceholder('Select staff/reviewer roles')
+    .setMinValues(1)
+    .setMaxValues(10);
+  if (reviewerIds.length) reviewerMenu.setDefaultRoles(...reviewerIds);
+  const positionMenu = new StringSelectMenuBuilder()
+    .setCustomId('setup:position')
+    .setPlaceholder('Choose a position to configure')
+    .addOptions(config.positions.map((position) => ({
+      label: position.name,
+      description: isDiscordId(position.roleId) && isDiscordId(position.reviewChannelId) ? 'Configured' : 'Setup required',
+      value: position.id,
+    })));
+  return {
+    content: notice || null,
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(reviewerMenu),
+      new ActionRowBuilder().addComponents(positionMenu),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('setup:add-position').setLabel('Add position').setStyle(ButtonStyle.Success),
+      ),
+    ],
+  };
+}
+
+function setupPositionView(config, position, confirmDelete = false, notice) {
+  const roleIsSet = isDiscordId(position.roleId);
+  const channelIsSet = isDiscordId(position.reviewChannelId);
+  const embed = new EmbedBuilder()
+    .setColor(confirmDelete ? '#ED4245' : roleIsSet && channelIsSet ? '#57F287' : '#FEE75C')
+    .setTitle(confirmDelete ? `Delete ${position.name}?` : `Set up ${position.name}`)
+    .setDescription(confirmDelete
+      ? 'This removes the position and its questions. Existing submitted applications remain in history.'
+      : `${position.description}\n\n**Granted role:** ${roleIsSet ? `<@&${position.roleId}>` : 'Not set'}\n**Review channel:** ${channelIsSet ? `<#${position.reviewChannelId}>` : 'Not set'}`);
+  const components = [];
+  if (confirmDelete) {
+    components.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`setup:confirm-delete:${position.id}`).setLabel('Confirm delete').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`setup:open:${position.id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+    ));
+  } else {
+    const roleMenu = new RoleSelectMenuBuilder()
+      .setCustomId(`setup:role:${position.id}`)
+      .setPlaceholder('Select the role granted on approval')
+      .setMinValues(1)
+      .setMaxValues(1);
+    if (roleIsSet) roleMenu.setDefaultRoles(position.roleId);
+    const channelMenu = new ChannelSelectMenuBuilder()
+      .setCustomId(`setup:channel:${position.id}`)
+      .setPlaceholder('Select the staff review channel')
+      .setChannelTypes(ChannelType.GuildText)
+      .setMinValues(1)
+      .setMaxValues(1);
+    if (channelIsSet) channelMenu.setDefaultChannels(position.reviewChannelId);
+    components.push(
+      new ActionRowBuilder().addComponents(roleMenu),
+      new ActionRowBuilder().addComponents(channelMenu),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`setup:edit-position:${position.id}`).setLabel('Edit details').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`setup:delete-position:${position.id}`).setLabel('Delete position').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('setup:home').setLabel('Back').setStyle(ButtonStyle.Secondary),
+      ),
+    );
+  }
+  return { content: notice || null, embeds: [embed], components };
+}
+
+function positionDetailsModal(position) {
+  const editing = Boolean(position);
+  const modal = new ModalBuilder()
+    .setCustomId(editing ? `setup:modal-edit:${position.id}` : 'setup:modal-add')
+    .setTitle(editing ? 'Edit application position' : 'Add application position');
+  const name = new TextInputBuilder()
+    .setCustomId('name')
+    .setLabel('Position name')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100);
+  const description = new TextInputBuilder()
+    .setCustomId('description')
+    .setLabel('Short description')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100);
+  if (position) {
+    name.setValue(position.name);
+    description.setValue(position.description);
+  }
+  return modal.addComponents(
+    new ActionRowBuilder().addComponents(name),
+    new ActionRowBuilder().addComponents(description),
+  );
+}
+
+function uniquePositionId(name, positions) {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 26) || 'position';
+  let id = base;
+  let suffix = 2;
+  while (positions.some((position) => position.id === id)) id = `${base.slice(0, 28)}-${suffix++}`;
+  return id;
 }
 
 function configPositionPicker(config, notice) {
@@ -404,7 +542,147 @@ export function attachBotHandlers(client, { configService, store, logger = conso
   client.on('interactionCreate', async (interaction) => {
     try {
       if (!interaction.inGuild()) return;
-      const config = await configService.get();
+      const config = await configService.get({ allowPlaceholders: true });
+
+      if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && interaction.customId.startsWith('setup:')) {
+        if (!isConfigManager(interaction)) {
+          await interaction.reply(ephemeral('You need the **Manage Server** permission to configure applications.'));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId === 'setup:home') {
+          await interaction.update(setupMainView(config));
+          return;
+        }
+
+        if (interaction.isRoleSelectMenu() && interaction.customId === 'setup:reviewers') {
+          const next = await configService.update((draft) => {
+            draft.reviewerRoleIds = interaction.values;
+          }, { allowPlaceholders: true });
+          await interaction.update(setupMainView(next, 'Reviewer roles saved.'));
+          return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId === 'setup:position') {
+          const position = config.positions.find((item) => item.id === interaction.values[0]);
+          if (!position) throw new Error('That position no longer exists.');
+          await interaction.update(setupPositionView(config, position));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('setup:open:')) {
+          const position = config.positions.find((item) => item.id === interaction.customId.split(':')[2]);
+          if (!position) throw new Error('That position no longer exists.');
+          await interaction.update(setupPositionView(config, position));
+          return;
+        }
+
+        if (interaction.isRoleSelectMenu() && interaction.customId.startsWith('setup:role:')) {
+          const positionId = interaction.customId.split(':')[2];
+          const next = await configService.update((draft) => {
+            const position = draft.positions.find((item) => item.id === positionId);
+            if (!position) throw new Error('That position no longer exists.');
+            position.roleId = interaction.values[0];
+          }, { allowPlaceholders: true });
+          const position = next.positions.find((item) => item.id === positionId);
+          await interaction.update(setupPositionView(next, position, false, 'Granted role saved.'));
+          return;
+        }
+
+        if (interaction.isChannelSelectMenu() && interaction.customId.startsWith('setup:channel:')) {
+          const positionId = interaction.customId.split(':')[2];
+          const next = await configService.update((draft) => {
+            const position = draft.positions.find((item) => item.id === positionId);
+            if (!position) throw new Error('That position no longer exists.');
+            position.reviewChannelId = interaction.values[0];
+          }, { allowPlaceholders: true });
+          const position = next.positions.find((item) => item.id === positionId);
+          await interaction.update(setupPositionView(next, position, false, 'Review channel saved.'));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId === 'setup:add-position') {
+          if (config.positions.length >= 25) {
+            await interaction.reply(ephemeral('Discord supports at most 25 positions in the application selector.'));
+            return;
+          }
+          await interaction.showModal(positionDetailsModal(null));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('setup:edit-position:')) {
+          const position = config.positions.find((item) => item.id === interaction.customId.split(':')[2]);
+          if (!position) throw new Error('That position no longer exists.');
+          await interaction.showModal(positionDetailsModal(position));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('setup:delete-position:')) {
+          const position = config.positions.find((item) => item.id === interaction.customId.split(':')[2]);
+          if (!position) throw new Error('That position no longer exists.');
+          if (config.positions.length === 1) {
+            await interaction.reply(ephemeral('At least one application position must remain.'));
+            return;
+          }
+          await interaction.update(setupPositionView(config, position, true));
+          return;
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('setup:confirm-delete:')) {
+          const positionId = interaction.customId.split(':')[2];
+          const next = await configService.update((draft) => {
+            if (draft.positions.length === 1) throw new Error('At least one position must remain.');
+            const index = draft.positions.findIndex((item) => item.id === positionId);
+            if (index === -1) throw new Error('That position no longer exists.');
+            draft.positions.splice(index, 1);
+          }, { allowPlaceholders: true });
+          await interaction.update(setupMainView(next, 'Position deleted.'));
+          return;
+        }
+
+        if (interaction.isModalSubmit() && /^setup:modal-(add|edit)/.test(interaction.customId)) {
+          const editing = interaction.customId.startsWith('setup:modal-edit:');
+          const positionId = editing ? interaction.customId.split(':')[2] : null;
+          const name = interaction.fields.getTextInputValue('name').trim();
+          const description = interaction.fields.getTextInputValue('description').trim();
+          try {
+            const next = await configService.update((draft) => {
+              if (editing) {
+                const position = draft.positions.find((item) => item.id === positionId);
+                if (!position) throw new Error('That position no longer exists.');
+                position.name = name;
+                position.description = description;
+              } else {
+                if (draft.positions.length >= 25) throw new Error('The 25-position limit has been reached.');
+                draft.positions.push({
+                  id: uniquePositionId(name, draft.positions),
+                  name,
+                  description,
+                  roleId: 'PUT_POSITION_ROLE_ID_HERE',
+                  reviewChannelId: 'PUT_REVIEW_CHANNEL_ID_HERE',
+                  questions: [{
+                    id: 'character-name',
+                    label: "What is your character's name?",
+                    style: 'short',
+                    required: true,
+                    maxLength: 100,
+                  }],
+                });
+              }
+            }, { allowPlaceholders: true });
+            const position = editing
+              ? next.positions.find((item) => item.id === positionId)
+              : next.positions.at(-1);
+            await interaction.reply({
+              ...setupPositionView(next, position, false, editing ? 'Position updated.' : 'Position added. Now select its role and review channel.'),
+              flags: MessageFlags.Ephemeral,
+            });
+          } catch (error) {
+            await interaction.reply(ephemeral(`Could not save the position: ${error.message}`));
+          }
+          return;
+        }
+      }
 
       if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && interaction.customId.startsWith('cfg:')) {
         if (!isConfigManager(interaction)) {
@@ -488,7 +766,7 @@ export function attachBotHandlers(client, { configService, store, logger = conso
             const index = position.questions.findIndex((item) => item.id === questionId);
             if (index === -1) throw new Error('That question no longer exists.');
             position.questions.splice(index, 1);
-          });
+          }, { allowPlaceholders: true });
           const position = next.positions.find((item) => item.id === positionId);
           await interaction.update(configPositionView(next, position, Number(pageText), 'Question deleted.'));
           return;
@@ -503,7 +781,7 @@ export function attachBotHandlers(client, { configService, store, logger = conso
             const target = direction === 'up' ? index - 1 : index + 1;
             if (index === -1 || target < 0 || target >= position.questions.length) throw new Error('That question cannot move in that direction.');
             [position.questions[index], position.questions[target]] = [position.questions[target], position.questions[index]];
-          });
+          }, { allowPlaceholders: true });
           const position = next.positions.find((item) => item.id === positionId);
           const question = position.questions.find((item) => item.id === questionId);
           const newPage = Math.floor(position.questions.indexOf(question) / CONFIG_QUESTIONS_PER_PAGE);
@@ -525,7 +803,7 @@ export function attachBotHandlers(client, { configService, store, logger = conso
               const question = questionFromModal(interaction, editing ? position.questions[index] : null, position.questions);
               if (editing) position.questions[index] = question;
               else position.questions.push(question);
-            });
+            }, { allowPlaceholders: true });
             const position = next.positions.find((item) => item.id === positionId);
             const page = editing ? requestedPage : Math.floor((position.questions.length - 1) / CONFIG_QUESTIONS_PER_PAGE);
             await interaction.reply({
@@ -555,6 +833,12 @@ export function attachBotHandlers(client, { configService, store, logger = conso
             return;
           }
           await interaction.reply({ ...configPositionPicker(config), flags: MessageFlags.Ephemeral });
+        } else if (interaction.commandName === 'application-setup') {
+          if (!isConfigManager(interaction)) {
+            await interaction.reply(ephemeral('You need the **Manage Server** permission to configure applications.'));
+            return;
+          }
+          await interaction.reply({ ...setupMainView(config), flags: MessageFlags.Ephemeral });
         }
         return;
       }

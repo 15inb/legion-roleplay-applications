@@ -15,4 +15,8 @@ export const commands = [
     .setName('application-config')
     .setDescription('Manage application questions from Discord.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName('application-setup')
+    .setDescription('Configure positions, roles, and review channels from Discord.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 ].map((command) => command.toJSON());

@@ -13,7 +13,7 @@ if (missing.length) {
 }
 
 const configService = new ConfigService();
-await configService.get();
+await configService.get({ allowPlaceholders: true });
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, process.env.DISCORD_GUILD_ID), { body: commands });

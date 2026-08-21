@@ -64,7 +64,7 @@ function panelComponents() {
 function positionPicker(config) {
   const positions = configuredPositions(config);
   if (!positions.length) {
-    return ephemeral('Applications are not configured yet. A server manager must run `/application-setup`.');
+    return ephemeral('Applications are not configured yet. A server manager must run `/setup`.');
   }
   const menu = new StringSelectMenuBuilder()
     .setCustomId('application:position')
@@ -395,16 +395,32 @@ function reviewPayload(record, config) {
   return { embeds: [embed], components };
 }
 
-function answersAttachment(record) {
-  const lines = [
-    `Application: ${record.id}`,
-    `Applicant: ${record.username} (${record.userId})`,
-    `Position: ${record.positionName}`,
-    `Submitted: ${record.createdAt}`,
-    '',
-  ];
-  for (const answer of record.answers) lines.push(answer.question, answer.value || '(No answer)', '');
-  return new AttachmentBuilder(Buffer.from(lines.join('\n'), 'utf8'), { name: `application-${record.id}.txt` });
+function answerEmbeds(record, color) {
+  return record.answers.map((answer, index) => new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`Question ${index + 1}`)
+    .setDescription(`**${answer.question}**\n\n${answer.value || '*No answer provided.*'}`));
+}
+
+function batchEmbeds(embeds, characterLimit = 5500) {
+  const batches = [];
+  let current = [];
+  let characters = 0;
+  for (const embed of embeds) {
+    const data = embed.toJSON();
+    const length = (data.title?.length ?? 0)
+      + (data.description?.length ?? 0)
+      + (data.fields ?? []).reduce((total, field) => total + field.name.length + field.value.length, 0);
+    if (current.length && (current.length >= 10 || characters + length > characterLimit)) {
+      batches.push(current);
+      current = [];
+      characters = 0;
+    }
+    current.push(embed);
+    characters += length;
+  }
+  if (current.length) batches.push(current);
+  return batches;
 }
 
 async function fetchChannelMessages(channel, limit = 1000) {
@@ -471,19 +487,28 @@ async function createTranscript(guild, record, config) {
   return applicationChannel;
 }
 
-function statusMessage(record) {
+function statusEmbed(record) {
   const labels = { pending: 'Pending review', approved: 'Approved', denied: 'Denied' };
-  let message = `Your latest application (**${record.id}**, ${record.positionName}) is **${labels[record.status] ?? record.status}**.`;
-  if (record.denialReason) message += `\nReason: ${record.denialReason}`;
-  return message;
+  const color = record.status === 'approved' ? '#57F287' : record.status === 'denied' ? '#ED4245' : '#FEE75C';
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle('Application Status')
+    .setDescription(`Your **${record.positionName}** application is **${labels[record.status] ?? record.status}**.`)
+    .addFields({ name: 'Application ID', value: record.id, inline: true });
+  if (record.denialReason) embed.addFields({ name: 'Reason', value: truncate(record.denialReason, 1024) });
+  return embed;
 }
 
 async function notifyApplicant(client, record) {
   const user = await client.users.fetch(record.userId);
-  const verb = record.status === 'approved' ? 'approved' : 'denied';
-  let content = `Your **${record.positionName}** application in **${record.guildName}** was **${verb}**.`;
-  if (record.denialReason) content += `\nReason: ${record.denialReason}`;
-  await user.send(content);
+  const approved = record.status === 'approved';
+  const embed = new EmbedBuilder()
+    .setColor(approved ? '#57F287' : '#ED4245')
+    .setTitle(approved ? 'Application Approved' : 'Application Denied')
+    .setDescription(`Your **${record.positionName}** application in **${record.guildName}** was **${record.status}**.`)
+    .setTimestamp(new Date(record.decidedAt));
+  if (record.denialReason) embed.addFields({ name: 'Reason', value: truncate(record.denialReason, 1024) });
+  await user.send({ embeds: [embed] });
 }
 
 export function attachBotHandlers(client, { configService, store, reactionRoleStore, logger = console }) {
@@ -506,7 +531,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
 
   async function startApplication(interaction, config, positionId) {
     if (!config.allowMultiplePendingApplications && await store.hasPending(interaction.guildId, interaction.user.id)) {
-      await interaction.reply(ephemeral('You already have an application awaiting review. Use `/application-status` to check it.'));
+      await interaction.reply(ephemeral('You already have an application awaiting review. Use `/status` to check it.'));
       return;
     }
     const position = config.positions.find((item) => item.id === positionId);
@@ -517,7 +542,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     if (!isDiscordId(position.roleId)
       || !isDiscordId(config.applicationCategoryId) || !isDiscordId(config.transcriptChannelId)
       || config.reviewerRoleIds.some((id) => !isDiscordId(id))) {
-      await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/application-setup`.'));
+      await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/setup`.'));
       return;
     }
     cleanSessions();
@@ -581,12 +606,21 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       content: config.reviewerRoleIds.map((roleId) => `<@&${roleId}>`).join(' '),
       allowedMentions: { roles: config.reviewerRoleIds },
       ...reviewPayload(record, config),
-      files: [answersAttachment(record)],
     });
     record.reviewMessageId = reviewMessage.id;
+    for (const embeds of batchEmbeds(answerEmbeds(record, config.panel.color))) {
+      await reviewChannel.send({ embeds, allowedMentions: { parse: [] } });
+    }
     await store.create(record);
     sessions.delete(session.token);
-    await interaction.reply(ephemeral(`Application **${record.id}** submitted successfully. Staff will contact you by DM if they need more information, and you will receive a DM when a decision is made.`));
+    await interaction.reply({
+      embeds: [new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('Application Submitted')
+        .setDescription('Staff will contact you by DM if they need more information. You will also receive a DM when a decision is made.')
+        .addFields({ name: 'Application ID', value: record.id, inline: true })],
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   async function handleModalPage(interaction, config, token, page) {
@@ -620,7 +654,12 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
   async function transcriptAndClose(record, config) {
     const guild = await client.guilds.fetch(record.guildId);
     const channel = await createTranscript(guild, record, config);
-    await channel.send(`This application was **${record.status}**. A transcript has been saved and this channel is now locked.`);
+    await channel.send({
+      embeds: [new EmbedBuilder()
+        .setColor(record.status === 'approved' ? '#57F287' : '#ED4245')
+        .setTitle(`Application ${record.status === 'approved' ? 'Approved' : 'Denied'}`)
+        .setDescription('A transcript has been saved. This channel is now locked.')],
+    });
     await Promise.all([
       ...config.reviewerRoleIds.map((roleId) => channel.permissionOverwrites.edit(roleId, { SendMessages: false, AddReactions: false })),
     ]);
@@ -952,26 +991,28 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'apply') {
           await interaction.reply(positionPicker(config));
-        } else if (interaction.commandName === 'application-status') {
+        } else if (interaction.commandName === 'status') {
           const record = await store.latestForUser(interaction.guildId, interaction.user.id);
-          await interaction.reply(ephemeral(record ? statusMessage(record) : 'You have not submitted an application yet.'));
-        } else if (interaction.commandName === 'application-panel') {
+          await interaction.reply(record
+            ? { embeds: [statusEmbed(record)], flags: MessageFlags.Ephemeral }
+            : ephemeral('You have not submitted an application yet.'));
+        } else if (interaction.commandName === 'panel') {
           if (!interaction.channel?.isTextBased()) return;
           await interaction.channel.send({ embeds: [panelEmbed(config)], components: panelComponents() });
           await interaction.reply(ephemeral('Application panel posted.'));
-        } else if (interaction.commandName === 'application-config') {
+        } else if (interaction.commandName === 'questions') {
           if (!isConfigManager(interaction)) {
             await interaction.reply(ephemeral('You need the **Manage Server** permission to change application questions.'));
             return;
           }
           await interaction.reply({ ...configPositionPicker(config), flags: MessageFlags.Ephemeral });
-        } else if (interaction.commandName === 'application-setup') {
+        } else if (interaction.commandName === 'setup') {
           if (!isConfigManager(interaction)) {
             await interaction.reply(ephemeral('You need the **Manage Server** permission to configure applications.'));
             return;
           }
           await interaction.reply({ ...setupMainView(config), flags: MessageFlags.Ephemeral });
-        } else if (interaction.commandName === 'application-message') {
+        } else if (interaction.commandName === 'message') {
           if (!isReviewer(interaction, config)) {
             await interaction.reply(ephemeral('You do not have permission to message applicants.'));
             return;
@@ -984,12 +1025,14 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
           const content = interaction.options.getString('message', true);
           try {
             const applicant = await client.users.fetch(record.userId);
-            await applicant.send([
-              `**Message from ${interaction.guild.name} application staff**`,
-              content,
-              '',
-              'Reply to this DM and your response will be sent privately to the application staff.',
-            ].join('\n'));
+            await applicant.send({
+              embeds: [new EmbedBuilder()
+                .setColor('#5865F2')
+                .setTitle(`Message from ${interaction.guild.name} Application Staff`)
+                .setDescription(content)
+                .setFooter({ text: 'Reply to this DM to send your response privately to application staff.' })
+                .setTimestamp()],
+            });
           } catch (error) {
             logger.warn(`Could not DM applicant for ${record.id}:`, error.message);
             await interaction.reply(ephemeral('The applicant could not be DMed. They may have server DMs disabled or have blocked the bot.'));
@@ -1004,7 +1047,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
             allowedMentions: { parse: [] },
           });
           await interaction.reply(ephemeral('Message sent to the applicant by DM.'));
-        } else if (interaction.commandName === 'reaction-role') {
+        } else if (interaction.commandName === 'roles') {
           await handleReactionRoleCommand(interaction, reactionRoleStore);
         }
         return;
@@ -1115,12 +1158,22 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     try {
       const record = await store.latestPendingForUser(message.author.id);
       if (!record) {
-        await message.reply('You do not have an open application to reply to.');
+        await message.reply({
+          embeds: [new EmbedBuilder()
+            .setColor('#ED4245')
+            .setTitle('No Open Application')
+            .setDescription('You do not have an open application to reply to.')],
+        });
         return;
       }
       const applicationChannel = await client.channels.fetch(record.reviewChannelId);
       if (!applicationChannel?.isTextBased()) {
-        await message.reply('Your application channel is unavailable. Please contact server staff directly.');
+        await message.reply({
+          embeds: [new EmbedBuilder()
+            .setColor('#ED4245')
+            .setTitle('Message Not Delivered')
+            .setDescription('Your application is unavailable. Please contact server staff directly.')],
+        });
         return;
       }
       const attachmentLines = [...message.attachments.values()].map((attachment) => `[Attachment: ${attachment.name}](${attachment.url})`);
@@ -1133,10 +1186,20 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
           .setTimestamp(message.createdAt)],
         allowedMentions: { parse: [] },
       });
-      await message.reply('Your reply was sent privately to the application staff.');
+      await message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('Message Delivered')
+          .setDescription('Your reply was sent privately to the application staff.')],
+      });
     } catch (error) {
       logger.error('Could not relay applicant DM:', error);
-      await message.reply('Your message could not be delivered. Please try again later.').catch(() => {});
+      await message.reply({
+        embeds: [new EmbedBuilder()
+          .setColor('#ED4245')
+          .setTitle('Message Not Delivered')
+          .setDescription('Your message could not be delivered. Please try again later.')],
+      }).catch(() => {});
     }
   });
 }

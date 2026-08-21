@@ -5,22 +5,22 @@ export const commands = [
     .setName('apply')
     .setDescription('Start a private roleplay position application.'),
   new SlashCommandBuilder()
-    .setName('application-status')
+    .setName('status')
     .setDescription('Check the status of your latest application.'),
   new SlashCommandBuilder()
-    .setName('application-panel')
+    .setName('panel')
     .setDescription('Post the application panel in this channel.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
-    .setName('application-config')
+    .setName('questions')
     .setDescription('Manage application questions from Discord.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
-    .setName('application-setup')
+    .setName('setup')
     .setDescription('Configure positions, roles, application category, and transcripts.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
-    .setName('application-message')
+    .setName('message')
     .setDescription('Send a private bot DM to the applicant for this application channel.')
     .addStringOption((option) => option
       .setName('message')
@@ -28,7 +28,7 @@ export const commands = [
       .setMaxLength(1900)
       .setRequired(true)),
   new SlashCommandBuilder()
-    .setName('reaction-role')
+    .setName('roles')
     .setDescription('Create and manage reaction-role messages.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((subcommand) => subcommand

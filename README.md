@@ -15,10 +15,10 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Persistent reaction-role panels
 - Required denial reasons and optional applicant DMs
 - Persistent application history stored in `data/applications.json`
-- `/application-status` for applicants
-- `/application-panel` for server managers
-- `/application-setup` role, channel, and position manager
-- `/application-config` question manager for server managers
+- `/status` for applicants
+- `/panel` for server managers
+- `/setup` role, channel, and position manager
+- `/questions` question manager for server managers
 - Live config reload: changes apply the next time somebody interacts with the bot
 - PM2 production deployment with crash recovery and automatic reboot startup
 
@@ -33,7 +33,7 @@ Never commit or share `.env`. If a token is exposed, reset it in the Developer P
 
 ## 2. Configure everything from Discord
 
-You do not need to edit `config/applications.json`. Start the bot, then run `/application-setup` as a member with **Manage Server**. The private setup panel lets you:
+You do not need to edit `config/applications.json`. Start the bot, then run `/setup` as a member with **Manage Server**. The private setup panel lets you:
 
 - Select one or more staff/reviewer roles
 - Select the category where private application channels are created
@@ -41,9 +41,9 @@ You do not need to edit `config/applications.json`. Start the bot, then run `/ap
 - Select the Discord role granted for each position
 - Add, rename, or delete application positions
 
-Then run `/application-config` to add, edit, reorder, or delete questions. All selections are saved automatically and apply immediately. Until a reviewer role and at least one complete position are selected, applicants receive a friendly setup-incomplete message instead of an error.
+Then run `/questions` to add, edit, reorder, or delete questions. All selections are saved automatically and apply immediately. Until a reviewer role and at least one complete position are selected, applicants receive a friendly setup-incomplete message instead of an error.
 
-The included starting configuration has one **Legionnaire Application** with eight Legion questions. You can add more application positions later from `/application-setup`.
+The included starting configuration has one **Legionnaire Application** with eight Legion questions. You can add more application positions later from `/setup`.
 
 The bot's Discord role must appear above every role it needs to grant in **Server Settings → Roles**. Members with **Manage Server** can review applications even if they do not have a configured reviewer role.
 
@@ -57,7 +57,7 @@ npm test
 npm start
 ```
 
-The bot registers its guild slash commands at startup. Use `/application-panel` in the desired public channel, or let members use `/apply` directly.
+The bot registers its guild slash commands at startup. Use `/panel` in the desired public channel, or let members use `/apply` directly.
 
 ## 4. Deploy to an Ubuntu VPS with PM2
 
@@ -138,19 +138,19 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 ## Commands
 
 - `/apply` — choose a position and start an application
-- `/application-status` — view the latest application status
-- `/application-panel` — post the permanent Apply button (Manage Server required)
-- `/application-setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
-- `/application-message` — DM the applicant from inside their open application channel (reviewers only)
-- `/application-config` — add, edit, reorder, or delete questions using a private Discord control panel (Manage Server required)
-- `/reaction-role create` — post a new reaction-role panel
-- `/reaction-role add` — add another emoji/role mapping to a message
-- `/reaction-role remove` — remove a mapping
-- `/reaction-role list` — list configured mappings
+- `/status` — view the latest application status
+- `/panel` — post the permanent Apply button (Manage Server required)
+- `/setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
+- `/message` — DM the applicant from inside their open application channel (reviewers only)
+- `/questions` — add, edit, reorder, or delete questions using a private Discord control panel (Manage Server required)
+- `/roles create` — post a new reaction-role panel
+- `/roles add` — add another emoji/role mapping to a message
+- `/roles remove` — remove a mapping
+- `/roles list` — list configured mappings
 
 ## Managing questions from Discord
 
-Run `/application-config`, then choose a position. The private manager lets you:
+Run `/questions`, then choose a position. The private manager lets you:
 
 - Add a question with a Discord modal
 - Edit its wording, answer type, required status, limits, and placeholder
@@ -162,12 +162,12 @@ Changes are saved to the bot's private `data/settings.json` runtime file and app
 
 ## Private channels and transcripts
 
-After the final form page is submitted, the bot creates a channel under the category selected in `/application-setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original answers and staff review buttons are posted there.
+After the final form page is submitted, the bot creates a channel under the category selected in `/setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original questions and answers are posted as numbered embeds with the staff review controls.
 
 To contact the applicant, a reviewer runs this inside the application channel:
 
 ```text
-/application-message message:Your message here
+/message message:Your message here
 ```
 
 The bot sends the message by DM without exposing the staff member's identity. When the applicant replies to the bot's DM, their message and attachment links are relayed into the open application channel and the applicant receives a delivery confirmation. Applicants with no open application receive a clear response instead.
@@ -176,7 +176,7 @@ When staff approve or deny the application, the bot:
 
 1. Saves the decision.
 2. Generates a timestamped text transcript of up to 1,000 channel messages, embeds, and attachment links.
-3. Uploads it to the transcript channel selected in `/application-setup`.
+3. Uploads it to the transcript channel selected in `/setup`.
 4. Locks the application channel and renames it with a `closed-` prefix.
 
 The bot needs **View Channels**, **Send Messages**, **Embed Links**, **Attach Files**, **Read Message History**, **Add Reactions**, **Manage Channels**, **Manage Messages**, and **Manage Roles**. Its role must remain above every role it grants.
@@ -186,10 +186,10 @@ The bot needs **View Channels**, **Send Messages**, **Embed Links**, **Attach Fi
 Create a panel entirely from Discord:
 
 ```text
-/reaction-role create channel:#roles role:@Legion emoji:🛡️ title:Join the Legion
+/roles create channel:#roles role:@Legion emoji:🛡️ title:Join the Legion
 ```
 
-Removing a reaction removes the role. Custom server emoji mentions are supported. Reaction-role mappings persist in `data/reaction-roles.json`, so they continue working after restarts. Use `/reaction-role add` to attach additional mappings to an existing message; enable Discord Developer Mode to copy that message's ID.
+Removing a reaction removes the role. Custom server emoji mentions are supported. Reaction-role mappings persist in `data/reaction-roles.json`, so they continue working after restarts. Use `/roles add` to attach additional mappings to an existing message; enable Discord Developer Mode to copy that message's ID.
 
 ## Data and privacy
 

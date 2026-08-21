@@ -49,7 +49,7 @@ test('application setup renders reviewer, category, transcript, and position con
   });
   const interaction = {
     customId: '',
-    commandName: 'application-setup',
+    commandName: 'setup',
     memberPermissions: { has: () => true },
     inGuild: () => true,
     isMessageComponent: () => false,
@@ -73,9 +73,10 @@ test('a completed application creates and stores a private review channel', asyn
   let modal;
   let channelOptions;
   let stored;
+  const channelMessages = [];
   const reviewChannel = {
     id: '523456789012345678',
-    send: async () => ({ id: '623456789012345678' }),
+    send: async (payload) => { channelMessages.push(payload); return { id: '623456789012345678' }; },
   };
   const client = {
     user: { id: '723456789012345678' },
@@ -134,6 +135,8 @@ test('a completed application creates and stores a private review channel', asyn
   assert.equal(stored.reviewChannelId, reviewChannel.id);
   assert.equal(stored.transcriptChannelId, config.transcriptChannelId);
   assert.equal(stored.answers.length, 8);
+  assert.ok(channelMessages.slice(1).some((payload) => payload.embeds?.[0]?.data?.title === 'Question 1'));
+  assert.ok(channelMessages.every((payload) => !payload.files));
 });
 
 test('applicant DM replies relay into the hidden application channel', async () => {
@@ -170,5 +173,5 @@ test('applicant DM replies relay into the hidden application channel', async () 
   });
 
   assert.match(relayed.embeds[0].data.description, /Here is my response/);
-  assert.match(confirmation, /sent privately/);
+  assert.match(confirmation.embeds[0].data.description, /sent privately/);
 });

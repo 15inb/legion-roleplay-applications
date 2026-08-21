@@ -1,4 +1,4 @@
-import { readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const SNOWFLAKE_OR_PLACEHOLDER = /^(?:\d{17,20}|PUT_[A-Z0-9_]+_HERE)$/;
@@ -41,7 +41,7 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
       assert(QUESTION_ID.test(question.id), `${qPrefix}.id must be lowercase letters, numbers, or hyphens (max 50)`);
       assert(!questionIds.has(question.id), `${qPrefix}.id "${question.id}" is duplicated`);
       questionIds.add(question.id);
-      assert(typeof question.label === 'string' && question.label.length >= 1 && question.label.length <= 45, `${qPrefix}.label must be 1-45 characters`);
+      assert(typeof question.label === 'string' && question.label.length >= 1 && question.label.length <= 100, `${qPrefix}.label must be 1-100 characters`);
       assert(['short', 'paragraph'].includes(question.style), `${qPrefix}.style must be "short" or "paragraph"`);
       assert(typeof question.required === 'boolean', `${qPrefix}.required must be true or false`);
       const min = question.minLength ?? 0;
@@ -62,14 +62,31 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
 }
 
 export class ConfigService {
-  constructor(filePath = path.resolve('config/applications.json')) {
+  constructor(filePath = path.resolve('data/settings.json'), seedPath = path.resolve('config/applications.json')) {
     this.filePath = filePath;
+    this.seedPath = seedPath;
     this.cached = null;
     this.modifiedAt = 0;
     this.writeQueue = Promise.resolve();
   }
 
+  async ensureExists() {
+    try {
+      await stat(this.filePath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await mkdir(path.dirname(this.filePath), { recursive: true });
+      const seed = await readFile(this.seedPath, 'utf8');
+      try {
+        await writeFile(this.filePath, seed, { encoding: 'utf8', flag: 'wx' });
+      } catch (writeError) {
+        if (writeError.code !== 'EEXIST') throw writeError;
+      }
+    }
+  }
+
   async get(options) {
+    await this.ensureExists();
     const details = await stat(this.filePath);
     if (!this.cached || details.mtimeMs !== this.modifiedAt) {
       const parsed = JSON.parse(await readFile(this.filePath, 'utf8'));
@@ -81,6 +98,7 @@ export class ConfigService {
 
   async update(mutator, options) {
     const operation = async () => {
+      await this.ensureExists();
       const current = JSON.parse(await readFile(this.filePath, 'utf8'));
       const next = structuredClone(current);
       await mutator(next);

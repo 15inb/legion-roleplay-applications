@@ -38,6 +38,8 @@ You do not need to edit `config/applications.json`. Start the bot, then run `/ap
 
 Then run `/application-config` to add, edit, reorder, or delete questions. All selections are saved automatically and apply immediately. Until a reviewer role and at least one complete position are selected, applicants receive a friendly setup-incomplete message instead of an error.
 
+The included starting configuration has one **Legionnaire Application** with eight Legion questions. You can add more application positions later from `/application-setup`.
+
 The bot's Discord role must appear above every role it needs to grant in **Server Settings → Roles**. Members with **Manage Server** can review applications even if they do not have a configured reviewer role.
 
 ## 3. Run locally
@@ -146,7 +148,7 @@ Run `/application-config`, then choose a position. The private manager lets you:
 - Delete it after a confirmation step
 - Navigate large question lists in pages
 
-Changes are saved to `config/applications.json` and apply immediately to newly started applications. In-progress applications keep the question version they started with. A position must always retain at least one question.
+Changes are saved to the bot's private `data/settings.json` runtime file and apply immediately to newly started applications. In-progress applications keep the question version they started with. A position must always retain at least one question.
 
 ## Data and privacy
 

@@ -7,6 +7,7 @@ import {
   ChannelSelectMenuBuilder,
   ChannelType,
   EmbedBuilder,
+  LabelBuilder,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
@@ -297,7 +298,7 @@ function questionModal(position, question, page) {
     limits: question ? `${question.minLength ?? 0}-${question.maxLength ?? (question.style === 'short' ? 400 : 4000)}` : '0-1000',
     placeholder: question?.placeholder ?? '',
   };
-  const labelInput = new TextInputBuilder().setCustomId('label').setLabel('Question').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(45);
+  const labelInput = new TextInputBuilder().setCustomId('label').setLabel('Question').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(100);
   if (values.label) labelInput.setValue(values.label);
   const inputs = [
     labelInput,
@@ -341,16 +342,18 @@ function modalFor(session, position, page) {
     .setCustomId(`application:modal:${session.token}:${page}`)
     .setTitle(truncate(`${position.name} (${page + 1}/${pageCount})`, 45));
 
-  for (const question of questions) {
+  for (const [index, question] of questions.entries()) {
     const input = new TextInputBuilder()
       .setCustomId(question.id)
-      .setLabel(question.label)
       .setStyle(question.style === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short)
       .setRequired(question.required)
       .setMinLength(question.minLength ?? 0)
       .setMaxLength(question.maxLength ?? (question.style === 'short' ? 400 : 4000));
     if (question.placeholder) input.setPlaceholder(question.placeholder);
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    const label = new LabelBuilder().setTextInputComponent(input);
+    if (question.label.length <= 45) label.setLabel(question.label);
+    else label.setLabel(`Question ${page * QUESTIONS_PER_PAGE + index + 1}`).setDescription(question.label);
+    modal.addLabelComponents(label);
   }
   return modal;
 }
@@ -435,6 +438,11 @@ export function attachBotHandlers(client, { configService, store, logger = conso
     const position = config.positions.find((item) => item.id === positionId);
     if (!position) {
       await interaction.reply(ephemeral('That position is no longer available. Please start again.'));
+      return;
+    }
+    if (!isDiscordId(position.roleId) || !isDiscordId(position.reviewChannelId)
+      || config.reviewerRoleIds.some((id) => !isDiscordId(id))) {
+      await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/application-setup`.'));
       return;
     }
     cleanSessions();

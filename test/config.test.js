@@ -57,3 +57,18 @@ test('ConfigService permits gradual Discord setup while placeholders remain', as
   assert.deepEqual(partiallyConfigured.reviewerRoleIds, ['123456789012345678']);
   assert.match(partiallyConfigured.positions[0].roleId, /^PUT_/);
 });
+
+test('ConfigService seeds an untracked runtime settings file', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'roleplay-seed-'));
+  const runtimeFile = path.join(directory, 'data', 'settings.json');
+  const seedFile = path.join(directory, 'applications.json');
+  const seed = await readFile('config/applications.json', 'utf8');
+  await writeFile(seedFile, seed, 'utf8');
+  const service = new ConfigService(runtimeFile, seedFile);
+
+  const config = await service.get({ allowPlaceholders: true });
+
+  assert.equal(config.positions.length, 1);
+  assert.equal(config.positions[0].name, 'Legionnaire Application');
+  assert.equal(JSON.parse(await readFile(runtimeFile, 'utf8')).positions[0].questions.length, 8);
+});

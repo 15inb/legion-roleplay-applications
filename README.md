@@ -15,7 +15,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - `/application-panel` for server managers
 - `/application-config` question manager for server managers
 - Live config reload: changes apply the next time somebody interacts with the bot
-- Docker Compose and systemd deployment options
+- PM2 production deployment with crash recovery and automatic reboot startup
 
 ## 1. Create the Discord bot
 
@@ -79,38 +79,85 @@ npm start
 
 The bot registers its guild slash commands at startup. Use `/application-panel` in the desired public channel, or let members use `/apply` directly.
 
-## 4. Deploy to a VPS
+## 4. Deploy to an Ubuntu VPS with PM2
 
-### Docker Compose (recommended)
+Install Git and Node.js 20.12 or newer. Node.js 22 LTS is recommended. Verify the installation before continuing:
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_URL roleplay-applications
-cd roleplay-applications
+node --version
+npm --version
+```
+
+Clone the repository and install production dependencies as the non-root user that will own the bot process:
+
+```bash
+cd /opt
+sudo git clone https://github.com/15inb/legion-roleplay-applications.git
+sudo chown -R "$USER":"$USER" /opt/legion-roleplay-applications
+cd /opt/legion-roleplay-applications
+npm ci --omit=dev
+```
+
+Create and protect the environment file:
+
+```bash
 cp .env.example .env
-# Edit .env and set up position/channel/role IDs in config/applications.json
-sudo chown -R 1000:1000 config data
-docker compose up -d --build
-docker compose logs -f
+nano .env
+chmod 600 .env
 ```
 
-Updates:
+Fill in `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID`. Set the initial position, channel, and role IDs in `config/applications.json`, then validate it:
 
 ```bash
+python3 -m json.tool config/applications.json >/dev/null
+```
+
+Install PM2 globally and start the bot from the included ecosystem file:
+
+```bash
+sudo npm install -g pm2@latest
+pm2 start ecosystem.config.cjs
+pm2 status
+pm2 logs legion-roleplay-applications --lines 100
+```
+
+Press `Ctrl+C` to leave the live log view; the bot continues running. The ecosystem configuration uses one process because multiple Discord bot processes would race while writing the local application and question data.
+
+Enable automatic startup after a VPS reboot:
+
+```bash
+pm2 startup
+```
+
+PM2 prints a command beginning with `sudo env PATH=...`. Copy and run that exact generated command, then save the current process list:
+
+```bash
+pm2 save
+```
+
+### Updating the bot
+
+```bash
+cd /opt/legion-roleplay-applications
 git pull
-docker compose up -d --build
+npm ci --omit=dev
+pm2 restart ecosystem.config.cjs --update-env
+pm2 save
+pm2 logs legion-roleplay-applications --lines 100
 ```
 
-The `data` directory is mounted from the host, so application history survives container rebuilds.
-
-### systemd
-
-Install Node.js 20+, clone to `/opt/roleplay-applications`, create a dedicated `discordbot` user, run `npm ci --omit=dev`, and copy `deploy/roleplay-applications.service` to `/etc/systemd/system/`. Then run:
+### PM2 management commands
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now roleplay-applications
-sudo journalctl -u roleplay-applications -f
+pm2 status
+pm2 logs legion-roleplay-applications
+pm2 restart legion-roleplay-applications
+pm2 stop legion-roleplay-applications
+pm2 start ecosystem.config.cjs
+pm2 monit
 ```
+
+Application history remains in `data/applications.json`. Back up the `data` and `config` directories before major updates.
 
 ## Commands
 

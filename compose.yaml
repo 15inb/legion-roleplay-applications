@@ -1,0 +1,8 @@
+services:
+  roleplay-applications:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data

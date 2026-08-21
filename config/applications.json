@@ -1,0 +1,101 @@
+{
+  "reviewerRoleIds": ["PUT_STAFF_ROLE_ID_HERE"],
+  "allowMultiplePendingApplications": false,
+  "panel": {
+    "title": "Roleplay Applications",
+    "description": "Apply for an available roleplay position. Your answers are only shared with the review team.",
+    "color": "#5865F2"
+  },
+  "positions": [
+    {
+      "id": "law-enforcement",
+      "name": "Law Enforcement",
+      "description": "Apply for a law-enforcement position.",
+      "roleId": "PUT_LAW_ENFORCEMENT_ROLE_ID_HERE",
+      "reviewChannelId": "PUT_REVIEW_CHANNEL_ID_HERE",
+      "questions": [
+        {
+          "id": "character-name",
+          "label": "What is your character's name?",
+          "style": "short",
+          "required": true,
+          "maxLength": 100,
+          "placeholder": "First and last name"
+        },
+        {
+          "id": "age",
+          "label": "How old are you?",
+          "style": "short",
+          "required": true,
+          "minLength": 1,
+          "maxLength": 3
+        },
+        {
+          "id": "experience",
+          "label": "Describe your roleplay experience.",
+          "style": "paragraph",
+          "required": true,
+          "minLength": 30,
+          "maxLength": 1000
+        },
+        {
+          "id": "motivation",
+          "label": "Why do you want this position?",
+          "style": "paragraph",
+          "required": true,
+          "minLength": 50,
+          "maxLength": 1500
+        },
+        {
+          "id": "scenario",
+          "label": "How would you handle a tense scene?",
+          "style": "paragraph",
+          "required": true,
+          "minLength": 50,
+          "maxLength": 1500,
+          "placeholder": "Explain how you would keep the scene fair and enjoyable."
+        },
+        {
+          "id": "availability",
+          "label": "What is your usual availability?",
+          "style": "paragraph",
+          "required": true,
+          "maxLength": 500,
+          "placeholder": "Include your time zone."
+        }
+      ]
+    },
+    {
+      "id": "fire-ems",
+      "name": "Fire & EMS",
+      "description": "Apply for a Fire and EMS position.",
+      "roleId": "PUT_FIRE_EMS_ROLE_ID_HERE",
+      "reviewChannelId": "PUT_REVIEW_CHANNEL_ID_HERE",
+      "questions": [
+        {
+          "id": "character-name",
+          "label": "What is your character's name?",
+          "style": "short",
+          "required": true,
+          "maxLength": 100
+        },
+        {
+          "id": "experience",
+          "label": "Describe your medical roleplay experience.",
+          "style": "paragraph",
+          "required": true,
+          "minLength": 30,
+          "maxLength": 1200
+        },
+        {
+          "id": "motivation",
+          "label": "Why do you want this position?",
+          "style": "paragraph",
+          "required": true,
+          "minLength": 50,
+          "maxLength": 1500
+        }
+      ]
+    }
+  ]
+}

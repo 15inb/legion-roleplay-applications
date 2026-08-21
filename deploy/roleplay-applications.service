@@ -1,0 +1,17 @@
+[Unit]
+Description=Discord Roleplay Applications Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=discordbot
+WorkingDirectory=/opt/roleplay-applications
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/roleplay-applications/.env
+
+[Install]
+WantedBy=multi-user.target

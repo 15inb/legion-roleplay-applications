@@ -11,7 +11,7 @@ test('long Legion questions render in modal label descriptions without truncatio
   config.positions[0].roleId = '123456789012345678';
   let handler;
   let modal;
-  const client = { on: (_event, callback) => { handler = callback; } };
+  const client = { on: (event, callback) => { if (event === 'interactionCreate') handler = callback; } };
   attachBotHandlers(client, {
     configService: { get: async () => config },
     store: { hasPending: async () => false },
@@ -41,7 +41,7 @@ test('application setup renders reviewer, category, transcript, and position con
   const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
   let handler;
   let response;
-  const client = { on: (_event, callback) => { handler = callback; } };
+  const client = { on: (event, callback) => { if (event === 'interactionCreate') handler = callback; } };
   attachBotHandlers(client, {
     configService: { get: async () => config },
     store: {},
@@ -79,7 +79,7 @@ test('a completed application creates and stores a private review channel', asyn
   };
   const client = {
     user: { id: '723456789012345678' },
-    on: (_event, callback) => { handler = callback; },
+    on: (event, callback) => { if (event === 'interactionCreate') handler = callback; },
   };
   attachBotHandlers(client, {
     configService: { get: async () => config },
@@ -129,9 +129,46 @@ test('a completed application creates and stores a private review channel', asyn
 
   assert.equal(channelOptions.parent, config.applicationCategoryId);
   assert.match(channelOptions.name, /^application-test-applicant-/);
-  assert.ok(channelOptions.permissionOverwrites.some((overwrite) => overwrite.id === common.user.id));
+  assert.ok(!channelOptions.permissionOverwrites.some((overwrite) => overwrite.id === common.user.id));
   assert.ok(channelOptions.permissionOverwrites.some((overwrite) => overwrite.id === config.reviewerRoleIds[0]));
   assert.equal(stored.reviewChannelId, reviewChannel.id);
   assert.equal(stored.transcriptChannelId, config.transcriptChannelId);
   assert.equal(stored.answers.length, 8);
+});
+
+test('applicant DM replies relay into the hidden application channel', async () => {
+  const handlers = {};
+  let relayed;
+  let confirmation;
+  const applicationChannel = {
+    isTextBased: () => true,
+    send: async (payload) => { relayed = payload; },
+  };
+  const client = {
+    on: (event, callback) => { handlers[event] = callback; },
+    channels: { fetch: async () => applicationChannel },
+  };
+  attachBotHandlers(client, {
+    configService: {},
+    store: {
+      latestPendingForUser: async () => ({ reviewChannelId: 'channel', id: 'APPLICATION' }),
+    },
+    logger: console,
+  });
+  await handlers.messageCreate({
+    author: {
+      bot: false,
+      id: 'user',
+      tag: 'applicant',
+      displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png',
+    },
+    guild: null,
+    content: 'Here is my response.',
+    attachments: new Map(),
+    createdAt: new Date('2026-08-21T12:00:00Z'),
+    reply: async (content) => { confirmation = content; },
+  });
+
+  assert.match(relayed.embeds[0].data.description, /Here is my response/);
+  assert.match(confirmation, /sent privately/);
 });

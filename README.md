@@ -10,6 +10,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Staff-only Approve and Deny controls
 - Automatic Discord role assignment on approval
 - A private channel for every submitted application
+- Staff-to-applicant DM messaging with applicant replies relayed back to staff
 - Decision transcripts archived to a configured channel
 - Persistent reaction-role panels
 - Required denial reasons and optional applicant DMs
@@ -139,7 +140,8 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 - `/apply` — choose a position and start an application
 - `/application-status` — view the latest application status
 - `/application-panel` — post the permanent Apply button (Manage Server required)
-- `/application-setup` — configure reviewer roles, positions, granted roles, and review channels with Discord selectors (Manage Server required)
+- `/application-setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
+- `/application-message` — DM the applicant from inside their open application channel (reviewers only)
 - `/application-config` — add, edit, reorder, or delete questions using a private Discord control panel (Manage Server required)
 - `/reaction-role create` — post a new reaction-role panel
 - `/reaction-role add` — add another emoji/role mapping to a message
@@ -160,7 +162,15 @@ Changes are saved to the bot's private `data/settings.json` runtime file and app
 
 ## Private channels and transcripts
 
-After the final form page is submitted, the bot creates a channel under the category selected in `/application-setup`. Only the applicant, reviewer roles, and bot can see it. The original answers and staff review buttons are posted there, and staff can ask follow-up questions.
+After the final form page is submitted, the bot creates a channel under the category selected in `/application-setup`. Only reviewer roles and the bot can see it; the applicant never receives channel access or a channel link. The original answers and staff review buttons are posted there.
+
+To contact the applicant, a reviewer runs this inside the application channel:
+
+```text
+/application-message message:Your message here
+```
+
+The bot sends the message by DM without exposing the staff member's identity. When the applicant replies to the bot's DM, their message and attachment links are relayed into the open application channel and the applicant receives a delivery confirmation. Applicants with no open application receive a clear response instead.
 
 When staff approve or deny the application, the bot:
 

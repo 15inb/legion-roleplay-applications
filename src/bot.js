@@ -554,7 +554,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     };
 
     const safeName = interaction.user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'applicant';
-    const memberPermissions = [
+    const staffPermissions = [
       PermissionFlagsBits.ViewChannel,
       PermissionFlagsBits.SendMessages,
       PermissionFlagsBits.ReadMessageHistory,
@@ -568,11 +568,10 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       topic: `${position.name} • ${interaction.user.tag} • ${record.id}`,
       permissionOverwrites: [
         { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-        { id: interaction.user.id, allow: memberPermissions },
-        ...config.reviewerRoleIds.map((roleId) => ({ id: roleId, allow: memberPermissions })),
+        ...config.reviewerRoleIds.map((roleId) => ({ id: roleId, allow: staffPermissions })),
         {
           id: client.user.id,
-          allow: [...memberPermissions, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages],
+          allow: [...staffPermissions, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages],
         },
       ],
       reason: `Private channel for application ${record.id}`,
@@ -585,13 +584,9 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       files: [answersAttachment(record)],
     });
     record.reviewMessageId = reviewMessage.id;
-    await reviewChannel.send({
-      content: `<@${record.userId}>, your application has been submitted. You may use this private channel to answer staff follow-up questions.`,
-      allowedMentions: { users: [record.userId] },
-    });
     await store.create(record);
     sessions.delete(session.token);
-    await interaction.reply(ephemeral(`Application **${record.id}** submitted successfully: <#${reviewChannel.id}>`));
+    await interaction.reply(ephemeral(`Application **${record.id}** submitted successfully. Staff will contact you by DM if they need more information, and you will receive a DM when a decision is made.`));
   }
 
   async function handleModalPage(interaction, config, token, page) {
@@ -627,7 +622,6 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     const channel = await createTranscript(guild, record, config);
     await channel.send(`This application was **${record.status}**. A transcript has been saved and this channel is now locked.`);
     await Promise.all([
-      channel.permissionOverwrites.edit(record.userId, { SendMessages: false, AddReactions: false }),
       ...config.reviewerRoleIds.map((roleId) => channel.permissionOverwrites.edit(roleId, { SendMessages: false, AddReactions: false })),
     ]);
     await channel.setName(`closed-${record.id.toLowerCase()}`, `Application ${record.id} ${record.status}`).catch(() => {});
@@ -977,6 +971,39 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
             return;
           }
           await interaction.reply({ ...setupMainView(config), flags: MessageFlags.Ephemeral });
+        } else if (interaction.commandName === 'application-message') {
+          if (!isReviewer(interaction, config)) {
+            await interaction.reply(ephemeral('You do not have permission to message applicants.'));
+            return;
+          }
+          const record = await store.pendingForChannel(interaction.guildId, interaction.channelId);
+          if (!record) {
+            await interaction.reply(ephemeral('Use this command inside an open application channel.'));
+            return;
+          }
+          const content = interaction.options.getString('message', true);
+          try {
+            const applicant = await client.users.fetch(record.userId);
+            await applicant.send([
+              `**Message from ${interaction.guild.name} application staff**`,
+              content,
+              '',
+              'Reply to this DM and your response will be sent privately to the application staff.',
+            ].join('\n'));
+          } catch (error) {
+            logger.warn(`Could not DM applicant for ${record.id}:`, error.message);
+            await interaction.reply(ephemeral('The applicant could not be DMed. They may have server DMs disabled or have blocked the bot.'));
+            return;
+          }
+          await interaction.channel.send({
+            embeds: [new EmbedBuilder()
+              .setColor('#5865F2')
+              .setAuthor({ name: `Staff DM sent by ${interaction.user.tag}` })
+              .setDescription(content)
+              .setTimestamp()],
+            allowedMentions: { parse: [] },
+          });
+          await interaction.reply(ephemeral('Message sent to the applicant by DM.'));
         } else if (interaction.commandName === 'reaction-role') {
           await handleReactionRoleCommand(interaction, reactionRoleStore);
         }
@@ -1080,6 +1107,36 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
       if (interaction.deferred) await interaction.editReply({ content: response.content }).catch(() => {});
       else if (interaction.replied) await interaction.followUp(response).catch(() => {});
       else await interaction.reply(response).catch(() => {});
+    }
+  });
+
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot || message.guild) return;
+    try {
+      const record = await store.latestPendingForUser(message.author.id);
+      if (!record) {
+        await message.reply('You do not have an open application to reply to.');
+        return;
+      }
+      const applicationChannel = await client.channels.fetch(record.reviewChannelId);
+      if (!applicationChannel?.isTextBased()) {
+        await message.reply('Your application channel is unavailable. Please contact server staff directly.');
+        return;
+      }
+      const attachmentLines = [...message.attachments.values()].map((attachment) => `[Attachment: ${attachment.name}](${attachment.url})`);
+      const description = [message.content || null, ...attachmentLines].filter(Boolean).join('\n') || '*Empty message*';
+      await applicationChannel.send({
+        embeds: [new EmbedBuilder()
+          .setColor('#FEE75C')
+          .setAuthor({ name: `DM reply from ${message.author.tag}`, iconURL: message.author.displayAvatarURL() })
+          .setDescription(truncate(description, 4000))
+          .setTimestamp(message.createdAt)],
+        allowedMentions: { parse: [] },
+      });
+      await message.reply('Your reply was sent privately to the application staff.');
+    } catch (error) {
+      logger.error('Could not relay applicant DM:', error);
+      await message.reply('Your message could not be delivered. Please try again later.').catch(() => {});
     }
   });
 }

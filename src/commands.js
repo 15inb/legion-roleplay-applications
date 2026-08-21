@@ -17,8 +17,16 @@ export const commands = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName('application-setup')
-    .setDescription('Configure positions, roles, and review channels from Discord.')
+    .setDescription('Configure positions, roles, application category, and transcripts.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName('application-message')
+    .setDescription('Send a private bot DM to the applicant for this application channel.')
+    .addStringOption((option) => option
+      .setName('message')
+      .setDescription('Message to send to the applicant.')
+      .setMaxLength(1900)
+      .setRequired(true)),
   new SlashCommandBuilder()
     .setName('reaction-role')
     .setDescription('Create and manage reaction-role messages.')

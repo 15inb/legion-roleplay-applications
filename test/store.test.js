@@ -14,6 +14,10 @@ test('applications persist and can be decided once', async () => {
   await store.create(record);
   assert.equal(await store.hasPending('guild', 'user'), true);
   assert.equal((await store.latestForUser('guild', 'user')).id, 'TEST123');
+  record.reviewChannelId = 'channel';
+  await store.save();
+  assert.equal((await store.pendingForChannel('guild', 'channel')).id, 'TEST123');
+  assert.equal((await store.latestPendingForUser('user')).id, 'TEST123');
 
   const decided = await store.decide('TEST123', { status: 'approved', decidedBy: 'reviewer' });
   assert.equal(decided.status, 'approved');

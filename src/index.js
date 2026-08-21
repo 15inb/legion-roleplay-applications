@@ -38,6 +38,8 @@ client.once('clientReady', (readyClient) => {
   readyClient.user.setActivity(process.env.BOT_ACTIVITY || 'Roleplay Applications', { type: ActivityType.Watching });
   const permissions = PermissionFlagsBits.ViewChannel
     | PermissionFlagsBits.SendMessages
+    | PermissionFlagsBits.SendMessagesInThreads
+    | PermissionFlagsBits.CreatePublicThreads
     | PermissionFlagsBits.EmbedLinks
     | PermissionFlagsBits.AttachFiles
     | PermissionFlagsBits.ReadMessageHistory

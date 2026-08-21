@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { attachBotHandlers, buildTranscriptHtml } from '../src/bot.js';
+import { attachBotHandlers, buildDiscordTranscriptPages, buildTranscriptHtml } from '../src/bot.js';
+
+test('Discord transcript pages stay within embed limits and escape user markdown', () => {
+  const messages = Array.from({ length: 12 }, (_, index) => ({
+    author: { tag: `Applicant_${index}`, id: String(1000 + index) },
+    createdTimestamp: new Date('2026-08-21T12:30:00.000Z').getTime() + index,
+    content: `${'A long answer *with markdown* and @everyone. '.repeat(18)} ${index}`,
+    embeds: [{ title: `Question ${index + 1}`, description: 'An embedded question.' }],
+    attachments: new Map(),
+  }));
+
+  const pages = buildDiscordTranscriptPages(messages);
+  assert.ok(pages.length > 1);
+  assert.ok(pages.every((page) => page.length <= 3900));
+  assert.match(pages.join('\n'), /\\\*with markdown\\\*/);
+  assert.match(pages.join('\n'), /Question 1/);
+  assert.match(pages.join('\n'), /@everyone/);
+});
 
 test('HTML transcripts are readable, complete, and escape untrusted content', () => {
   const html = buildTranscriptHtml({

@@ -445,6 +445,78 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function escapeDiscordMarkdown(value) {
+  return String(value ?? '').replace(/([\\`*_{}\[\]()<>#+\-.!|>~])/g, '\\$1');
+}
+
+function splitDiscordText(value, limit = 3900) {
+  const chunks = [];
+  let remaining = value;
+  while (remaining.length > limit) {
+    let splitAt = remaining.lastIndexOf('\n', limit);
+    if (splitAt < Math.floor(limit * 0.5)) splitAt = limit;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, '');
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function discordTranscriptMessage(message) {
+  const author = escapeDiscordMarkdown(message.author?.tag ?? 'Unknown user');
+  const authorId = escapeDiscordMarkdown(message.author?.id ?? 'unknown');
+  const timestamp = Math.floor(message.createdTimestamp / 1000);
+  const parts = [`**${author}** \`${authorId}\` • <t:${timestamp}:F>`];
+  if (message.content) parts.push(escapeDiscordMarkdown(message.content));
+  for (const embed of message.embeds ?? []) {
+    const embedParts = [];
+    if (embed.author?.name) embedParts.push(`**${escapeDiscordMarkdown(embed.author.name)}**`);
+    if (embed.title) embedParts.push(`**${escapeDiscordMarkdown(embed.title)}**`);
+    if (embed.description) embedParts.push(escapeDiscordMarkdown(embed.description));
+    for (const field of embed.fields ?? []) {
+      embedParts.push(`**${escapeDiscordMarkdown(field.name)}**\n${escapeDiscordMarkdown(field.value)}`);
+    }
+    if (embed.footer?.text) embedParts.push(`_${escapeDiscordMarkdown(embed.footer.text)}_`);
+    if (embedParts.length) parts.push(embedParts.join('\n'));
+  }
+  for (const attachment of message.attachments?.values?.() ?? []) {
+    parts.push(`📎 [${escapeDiscordMarkdown(attachment.name ?? 'Attachment')}](${attachment.url})`);
+  }
+  return parts.join('\n');
+}
+
+export function buildDiscordTranscriptPages(messages) {
+  if (!messages.length) return ['_No messages were found in the application channel._'];
+  const pages = [];
+  let current = '';
+  for (const message of messages) {
+    for (const chunk of splitDiscordText(discordTranscriptMessage(message))) {
+      const candidate = current ? `${current}\n\n${chunk}` : chunk;
+      if (candidate.length > 3900 && current) {
+        pages.push(current);
+        current = chunk;
+      } else {
+        current = candidate;
+      }
+    }
+  }
+  if (current) pages.push(current);
+  return pages;
+}
+
+async function postDiscordTranscriptPages(channel, pages, record) {
+  for (const [index, page] of pages.entries()) {
+    await channel.send({
+      embeds: [new EmbedBuilder()
+        .setColor(record.status === 'approved' ? '#57F287' : '#ED4245')
+        .setTitle(`Transcript • Page ${index + 1} of ${pages.length}`)
+        .setDescription(page)
+        .setFooter({ text: `${record.positionName} • ${record.id}` })],
+      allowedMentions: { parse: [] },
+    });
+  }
+}
+
 function renderTranscriptEmbed(embed) {
   const fields = (embed.fields ?? []).map((field) => `
     <div class="embed-field">
@@ -535,7 +607,7 @@ export function buildTranscriptHtml(record, messages, channelName = 'application
 </main></body></html>`;
 }
 
-async function createTranscript(guild, record, config) {
+async function createTranscript(guild, record, config, logger) {
   const applicationChannel = await guild.channels.fetch(record.reviewChannelId);
   const transcriptChannel = await guild.channels.fetch(record.transcriptChannelId ?? config.transcriptChannelId);
   if (!applicationChannel?.isTextBased() || !transcriptChannel?.isTextBased()) throw new Error('Application or transcript channel is unavailable.');
@@ -565,7 +637,37 @@ async function createTranscript(guild, record, config) {
     )
     .setTimestamp(new Date(record.decidedAt));
   if (record.denialReason) embed.addFields({ name: 'Reason', value: truncate(record.denialReason, 1024) });
-  await transcriptChannel.send({ embeds: [embed], files: [file], allowedMentions: { parse: [] } });
+  const archiveMessage = await transcriptChannel.send({ embeds: [embed], files: [file], allowedMentions: { parse: [] } });
+  const pages = buildDiscordTranscriptPages(includedMessages);
+  let discordTranscriptChannel = transcriptChannel;
+  let transcriptThread;
+  try {
+    transcriptThread = await archiveMessage.startThread({
+      name: truncate(`transcript-${record.id}-${record.username}`, 100),
+      autoArchiveDuration: 1440,
+      reason: `Discord transcript for application ${record.id}`,
+    });
+    discordTranscriptChannel = transcriptThread;
+  } catch (error) {
+    logger.warn(`Could not create transcript thread for ${record.id}; posting pages in the archive channel:`, error.message);
+  }
+
+  try {
+    await postDiscordTranscriptPages(discordTranscriptChannel, pages, record);
+  } catch (error) {
+    if (!transcriptThread) throw error;
+    logger.warn(`Could not post transcript pages in thread for ${record.id}; using the archive channel:`, error.message);
+    await transcriptThread.delete('Transcript posting failed; archive channel fallback used').catch(() => {});
+    transcriptThread = undefined;
+    await postDiscordTranscriptPages(transcriptChannel, pages, record);
+  }
+
+  if (transcriptThread) {
+    embed.addFields({ name: 'Read in Discord', value: `<#${transcriptThread.id}>`, inline: false });
+    await archiveMessage.edit({ embeds: [embed] }).catch((error) => {
+      logger.warn(`Could not add transcript thread link for ${record.id}:`, error.message);
+    });
+  }
   return applicationChannel;
 }
 
@@ -737,7 +839,7 @@ export function attachBotHandlers(client, { configService, store, reactionRoleSt
     let channel;
     try {
       const guild = await client.guilds.fetch(record.guildId);
-      channel = await createTranscript(guild, record, config);
+      channel = await createTranscript(guild, record, config, logger);
     } catch (error) {
       logger.error(`Transcript failed for ${record.id}:`, error);
       await interaction.editReply({ content: `${decisionMessage} The transcript failed, so the application channel was not deleted. Check the bot logs.` });

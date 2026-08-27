@@ -14,6 +14,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Staff-to-applicant DM messaging with applicant replies relayed back to staff
 - Decision transcripts archived to a configured channel
 - Persistent reaction-role panels
+- Customizable private ticket panels with selectable destination categories
 - Required denial reasons and applicant decision DMs
 - Automatic 24-hour reapplication cooldown after denial
 - Timed or permanent application bars managed from Discord
@@ -153,6 +154,8 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 - `/roles add` — add another emoji/role mapping to a message
 - `/roles remove` — remove a mapping
 - `/roles list` — list configured mappings
+- `/tickets create` — post a customizable ticket button and choose its destination category (Manage Server required)
+- `/tickets close` — close the current ticket after confirmation
 
 ## Managing questions from Discord
 
@@ -213,6 +216,18 @@ Create a panel entirely from Discord:
 
 The create command supports up to five role/emoji pairs, and the panel embed clearly lists every mapping. Removing a reaction removes its role. Custom server emoji mentions are supported. Reaction-role mappings persist in `data/reaction-roles.json`, so they continue working after restarts. Use `/roles add` to attach more mappings to the same panel later; the displayed list updates automatically. Enable Discord Developer Mode to copy that message's ID.
 
+## Tickets
+
+Create a ticket panel entirely from Discord:
+
+```text
+/tickets create panel-channel:#help ticket-category:Support name:General Support description:Press the button below when you need help. button-name:Open Ticket
+```
+
+The command lets you choose where the panel is posted, the category where its private tickets are created, the embed name and description, and the button label. Tickets use the application reviewer roles configured through `/setup` by default. Set the optional `support-role` field to give a particular panel its own staff role instead.
+
+Each user can have one open ticket per panel. Only the ticket opener, configured ticket staff, and the bot can see its channel. The welcome embed includes a **Close Ticket** button, and `/tickets close` provides the same confirmation flow. Closing permanently deletes the ticket channel. Panel and ticket state is saved in `data/tickets.json`, so buttons and duplicate-ticket protection continue working after restarts.
+
 ## Data and privacy
 
-Answers are posted only in private application channels and saved locally in `data/applications.json`. Unfinished interview progress is saved in `data/application-sessions.json`, and manual application bars are saved in `data/application-bars.json`. After a decision, the channel is permanently deleted and a Discord-readable transcript plus an HTML backup are sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.
+Answers are posted only in private application channels and saved locally in `data/applications.json`. Unfinished interview progress is saved in `data/application-sessions.json`, ticket state is saved in `data/tickets.json`, and manual application bars are saved in `data/application-bars.json`. After an application decision, its channel is permanently deleted and a Discord-readable transcript plus an HTML backup are sent to the configured archive channel. Restrict application, ticket, and transcript categories to appropriate staff, and back up the data directory if the history matters to you.

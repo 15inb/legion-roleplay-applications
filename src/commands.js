@@ -76,4 +76,19 @@ export const commands = [
       .addStringOption((option) => option.setName('message-id').setDescription('Discord message ID.').setRequired(true))
       .addStringOption((option) => option.setName('emoji').setDescription('The configured emoji.').setRequired(true)))
     .addSubcommand((subcommand) => subcommand.setName('list').setDescription('List configured reaction roles.')),
+  new SlashCommandBuilder()
+    .setName('tickets')
+    .setDescription('Create ticket panels or close the current ticket.')
+    .addSubcommand((subcommand) => subcommand
+      .setName('create')
+      .setDescription('Create a button panel that opens private tickets.')
+      .addChannelOption((option) => option.setName('panel-channel').setDescription('Where to post the ticket button.').addChannelTypes(ChannelType.GuildText).setRequired(true))
+      .addChannelOption((option) => option.setName('ticket-category').setDescription('Category where new ticket channels will be created.').addChannelTypes(ChannelType.GuildCategory).setRequired(true))
+      .addStringOption((option) => option.setName('name').setDescription('Ticket panel name and title.').setMinLength(1).setMaxLength(100).setRequired(true))
+      .addStringOption((option) => option.setName('description').setDescription('Explain what this ticket button is for.').setMinLength(1).setMaxLength(4000).setRequired(true))
+      .addStringOption((option) => option.setName('button-name').setDescription('Text displayed on the ticket button.').setMinLength(1).setMaxLength(80))
+      .addRoleOption((option) => option.setName('support-role').setDescription('Optional staff role for tickets from this panel.')))
+    .addSubcommand((subcommand) => subcommand
+      .setName('close')
+      .setDescription('Close the ticket channel you are currently viewing.')),
 ].map((command) => command.toJSON());

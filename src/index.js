@@ -7,6 +7,7 @@ import { attachReactionRoleHandlers, ReactionRoleStore } from './reaction-roles.
 import { ApplicationRestrictionStore } from './restrictions.js';
 import { ApplicationSessionStore } from './sessions.js';
 import { ApplicationStore } from './store.js';
+import { attachTicketHandlers, TicketStore } from './tickets.js';
 
 const requiredEnvironment = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID'];
 const missing = requiredEnvironment.filter((name) => !process.env[name]);
@@ -41,6 +42,7 @@ attachBotHandlers(client, {
   sessionStore: new ApplicationSessionStore(),
 });
 attachReactionRoleHandlers(client, reactionRoleStore);
+attachTicketHandlers(client, { store: new TicketStore(), configService });
 
 client.once('clientReady', (readyClient) => {
   readyClient.user.setActivity(process.env.BOT_ACTIVITY || 'Roleplay Applications', { type: ActivityType.Watching });

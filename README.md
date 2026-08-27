@@ -5,6 +5,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 ## Features
 
 - Private application interviews conducted one question at a time through bot DMs
+- Restart-safe unfinished interviews that resume at the saved question
 - Any number of questions without Discord's five-input modal limit
 - Multiple independently configured positions
 - Staff-only Approve and Deny controls
@@ -167,7 +168,7 @@ Changes are saved to the bot's private `data/settings.json` runtime file and app
 
 ## Private channels and transcripts
 
-Pressing an application button starts a private DM interview with the bot. Questions are sent one at a time, and each DM reply automatically advances to the next question. Applicants can type `back` to revise their previous answer or `cancel` to discard the unfinished interview. Answers are checked against the required and character-limit settings configured through `/questions`. An unfinished interview expires after 24 hours of inactivity or when the bot restarts.
+Pressing an application button starts a private DM interview with the bot. Questions are sent one at a time, and each DM reply automatically advances to the next question. Applicants can type `back` to revise their previous answer or `cancel` to discard the unfinished interview. Answers are checked against the required and character-limit settings configured through `/questions`. Progress is saved after every accepted answer in `data/application-sessions.json`, so an unfinished interview resumes at the same question after a bot or VPS restart. Interviews still expire after 24 hours of inactivity.
 
 After an application is denied, that user must wait 24 hours from the decision before starting another application. Staff can also restrict application access from Discord:
 
@@ -214,4 +215,4 @@ The create command supports up to five role/emoji pairs, and the panel embed cle
 
 ## Data and privacy
 
-Answers are posted only in private application channels and saved locally in `data/applications.json`. Manual application bars are saved in `data/application-bars.json`. After a decision, the channel is permanently deleted and a Discord-readable transcript plus an HTML backup are sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.
+Answers are posted only in private application channels and saved locally in `data/applications.json`. Unfinished interview progress is saved in `data/application-sessions.json`, and manual application bars are saved in `data/application-bars.json`. After a decision, the channel is permanently deleted and a Discord-readable transcript plus an HTML backup are sent to the configured archive channel. Restrict the application category and transcript channel to appropriate staff, and back up the data directory if the history matters to you.

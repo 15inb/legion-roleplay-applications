@@ -9,7 +9,7 @@
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:restart": "pm2 restart ecosystem.config.cjs --update-env",
     "dev": "node --watch src/index.js",
-    "check": "node --check src/index.js && node --check src/bot.js && node --check src/config.js && node --check src/store.js && node --check src/reaction-roles.js && node --check src/restrictions.js",
+    "check": "node --check src/index.js && node --check src/bot.js && node --check src/config.js && node --check src/store.js && node --check src/reaction-roles.js && node --check src/restrictions.js && node --check src/sessions.js",
     "test": "node --test"
   },
   "engines": {

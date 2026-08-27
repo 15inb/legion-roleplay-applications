@@ -5,6 +5,7 @@ import { commands } from './commands.js';
 import { ConfigService } from './config.js';
 import { attachReactionRoleHandlers, ReactionRoleStore } from './reaction-roles.js';
 import { ApplicationRestrictionStore } from './restrictions.js';
+import { ApplicationSessionStore } from './sessions.js';
 import { ApplicationStore } from './store.js';
 
 const requiredEnvironment = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID'];
@@ -37,6 +38,7 @@ attachBotHandlers(client, {
   store: new ApplicationStore(),
   reactionRoleStore,
   restrictionStore: new ApplicationRestrictionStore(),
+  sessionStore: new ApplicationSessionStore(),
 });
 attachReactionRoleHandlers(client, reactionRoleStore);
 

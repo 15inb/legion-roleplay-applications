@@ -17,8 +17,8 @@ import {
 } from 'discord.js';
 import { handleReactionRoleCommand } from './reaction-roles.js';
 import { handleApplicationBarCommand } from './restrictions.js';
+import { INTERVIEW_SESSION_LIFETIME_MS } from './sessions.js';
 
-const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const DENIAL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CONFIG_QUESTIONS_PER_PAGE = 20;
 
@@ -766,18 +766,28 @@ export function attachBotHandlers(client, {
   store,
   reactionRoleStore,
   restrictionStore = { getActive: async () => null },
+  sessionStore = { listActive: async () => [], upsert: async () => {}, remove: async () => {} },
   logger = console,
 }) {
   const sessions = new Map();
   const processing = new Set();
+  let sessionsLoaded;
 
-  function cleanSessions() {
-    const cutoff = Date.now() - SESSION_LIFETIME_MS;
-    for (const [token, session] of sessions) if (session.updatedAt < cutoff) sessions.delete(token);
+  async function loadSessions() {
+    sessionsLoaded ??= sessionStore.listActive().then((storedSessions) => {
+      for (const session of storedSessions) sessions.set(session.token, { ...session, processing: false });
+    });
+    await sessionsLoaded;
   }
 
-  function sessionForUser(userId) {
-    cleanSessions();
+  async function sessionForUser(userId) {
+    await loadSessions();
+    const cutoff = Date.now() - INTERVIEW_SESSION_LIFETIME_MS;
+    for (const [token, session] of sessions) {
+      if (session.updatedAt >= cutoff) continue;
+      sessions.delete(token);
+      await sessionStore.remove(token);
+    }
     return [...sessions.values()].find((session) => session.userId === userId);
   }
 
@@ -848,7 +858,7 @@ export function attachBotHandlers(client, {
       await editDeferredReply(interaction, ephemeral('That application is not fully configured yet. A server manager must run `/setup`.'));
       return;
     }
-    if (sessionForUser(interaction.user.id)) {
+    if (await sessionForUser(interaction.user.id)) {
       await editDeferredReply(interaction, ephemeral('You already have an unfinished application interview in your DMs. Finish it or type `cancel` there before starting another.'));
       return;
     }
@@ -868,10 +878,12 @@ export function attachBotHandlers(client, {
       processing: false,
     };
     sessions.set(token, session);
+    await sessionStore.upsert(session);
     try {
       await interaction.user.send(dmQuestionPayload(session));
     } catch (error) {
       sessions.delete(token);
+      await sessionStore.remove(token);
       logger.warn(`Could not start DM application for ${interaction.user.id}:`, error.message);
       await editDeferredReply(interaction, ephemeral('I could not DM you. Enable direct messages from server members, then press the application button again.'));
       return;
@@ -942,6 +954,7 @@ export function attachBotHandlers(client, {
     }
     await store.create(record);
     sessions.delete(session.token);
+    await sessionStore.remove(session.token);
     return record;
   }
 
@@ -1463,11 +1476,12 @@ export function attachBotHandlers(client, {
   client.on('messageCreate', async (message) => {
     if (message.author.bot || message.guild) return;
     try {
-      const session = sessionForUser(message.author.id);
+      const session = await sessionForUser(message.author.id);
       if (session) {
         const block = await applicationBlock(session.guildId, message.author.id);
         if (block) {
           sessions.delete(session.token);
+          await sessionStore.remove(session.token);
           const payload = applicationBlockPayload(block);
           delete payload.flags;
           payload.embeds[0].setDescription(block.type === 'bar'
@@ -1490,6 +1504,7 @@ export function attachBotHandlers(client, {
           const command = message.content.trim().toLowerCase();
           if (command === 'cancel') {
             sessions.delete(session.token);
+            await sessionStore.remove(session.token);
             await message.reply({
               embeds: [new EmbedBuilder()
                 .setColor('#ED4245')
@@ -1508,10 +1523,21 @@ export function attachBotHandlers(client, {
               });
               return;
             }
+            const previousQuestionIndex = session.questionIndex;
             session.questionIndex -= 1;
-            delete session.answers[session.position.questions[session.questionIndex].id];
+            const revisedQuestionId = session.position.questions[session.questionIndex].id;
+            const previousAnswer = session.answers[revisedQuestionId];
+            delete session.answers[revisedQuestionId];
             session.updatedAt = Date.now();
-            await message.reply(dmQuestionPayload(session));
+            await sessionStore.upsert(session);
+            try {
+              await message.reply(dmQuestionPayload(session));
+            } catch (error) {
+              session.questionIndex = previousQuestionIndex;
+              if (previousAnswer !== undefined) session.answers[revisedQuestionId] = previousAnswer;
+              await sessionStore.upsert(session);
+              throw error;
+            }
             return;
           }
 
@@ -1543,11 +1569,13 @@ export function attachBotHandlers(client, {
           session.updatedAt = Date.now();
           if (session.questionIndex + 1 < session.position.questions.length) {
             session.questionIndex += 1;
+            await sessionStore.upsert(session);
             try {
               await message.reply(dmQuestionPayload(session));
             } catch (error) {
               session.questionIndex -= 1;
               delete session.answers[question.id];
+              await sessionStore.upsert(session);
               throw error;
             }
             return;

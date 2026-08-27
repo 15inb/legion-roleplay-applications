@@ -1,6 +1,6 @@
 # Legion Roleplay Applications
 
-A configurable Discord bot for collecting roleplay applications, sending them to staff for review, and automatically granting the appropriate Discord role when an application is approved.
+A configurable Discord bot for collecting roleplay applications, sending them to staff for review, and automatically applying the appropriate Discord role changes when an application is approved.
 
 ## Features
 
@@ -8,7 +8,7 @@ A configurable Discord bot for collecting roleplay applications, sending them to
 - Any number of questions without Discord's five-input modal limit
 - Multiple independently configured positions
 - Staff-only Approve and Deny controls
-- Automatic Discord role assignment on approval
+- Automatic multi-role grants and removals on approval
 - A private channel for every submitted application
 - Staff-to-applicant DM messaging with applicant replies relayed back to staff
 - Decision transcripts archived to a configured channel
@@ -40,14 +40,14 @@ You do not need to edit `config/applications.json`. Start the bot, then run `/se
 - Select one or more staff/reviewer roles
 - Select the category where private application channels are created
 - Select the channel where decision transcripts are archived
-- Select the Discord role granted for each position
+- Select one or more roles granted and any roles removed for each position
 - Add, rename, or delete application positions
 
 Then run `/questions` to add, edit, reorder, or delete questions. All selections are saved automatically and apply immediately. Until a reviewer role and at least one complete position are selected, applicants receive a friendly setup-incomplete message instead of an error.
 
 The included starting configuration has one **Legionnaire Application** with eight Legion questions. You can add more application positions later from `/setup`.
 
-The bot's Discord role must appear above every role it needs to grant in **Server Settings → Roles**. Members with **Manage Server** can review applications even if they do not have a configured reviewer role.
+Each position has separate multi-select menus for roles to grant and roles to remove. Existing single-role position settings migrate automatically. The bot's Discord role must appear above every role it needs to grant or remove in **Server Settings → Roles**. Members with **Manage Server** can review applications even if they do not have a configured reviewer role.
 
 ## 3. Run locally
 
@@ -142,7 +142,7 @@ Application history remains in `data/applications.json`. Back up the `data` and 
 - `/apply` — choose a position and start its private DM interview
 - `/status` — view the latest application status
 - `/panel` — choose one or more applications and post a direct button for each one (Manage Server required)
-- `/setup` — configure reviewer roles, positions, granted roles, application category, and transcript channel (Manage Server required)
+- `/setup` — configure reviewer roles, positions, approval role grants/removals, application category, and transcript channel (Manage Server required)
 - `/message` — DM the applicant from inside their open application channel (reviewers only)
 - `/bar add` — bar a user from applying for a duration or permanently (Manage Server required)
 - `/bar remove` — remove a user's application bar (Manage Server required)
@@ -192,7 +192,7 @@ The bot sends the message by DM without exposing the staff member's identity. Wh
 
 When staff approve or deny the application, the bot:
 
-1. Saves the decision.
+1. On approval, grants and removes every role configured for that position, then saves the decision. If a role change fails, the application remains pending and completed changes are rolled back where possible.
 2. Generates a Discord-native transcript of up to 1,000 channel messages, embeds, and attachment links.
 3. Posts the transcript as readable embed pages in a dedicated thread under the transcript channel selected in `/setup`. If threads are unavailable, the pages are posted directly in that channel.
 4. Attaches a polished, self-contained HTML copy with image previews as an optional backup/export.
@@ -200,7 +200,7 @@ When staff approve or deny the application, the bot:
 
 The Discord transcript and backup archive are saved before deletion. Staff can open the transcript thread and read it without downloading anything. If transcript generation or posting fails, the bot keeps the application channel and tells the reviewer to check the logs, preventing the conversation from being lost. If an unusually large HTML backup exceeds Discord's upload limit, the oldest messages are omitted in safe chunks and the transcript clearly records how many were omitted.
 
-The bot needs **View Channels**, **Send Messages**, **Send Messages in Threads**, **Create Public Threads**, **Embed Links**, **Attach Files**, **Read Message History**, **Add Reactions**, **Manage Channels**, **Manage Messages**, and **Manage Roles**. Its role must remain above every role it grants. Without thread permissions, readable transcript pages fall back to the configured transcript channel.
+The bot needs **View Channels**, **Send Messages**, **Send Messages in Threads**, **Create Public Threads**, **Embed Links**, **Attach Files**, **Read Message History**, **Add Reactions**, **Manage Channels**, **Manage Messages**, and **Manage Roles**. Its role must remain above every role it grants or removes. Without thread permissions, readable transcript pages fall back to the configured transcript channel.
 
 ## Reaction roles
 

@@ -30,7 +30,7 @@ test('ConfigService persists validated Discord-side edits', async () => {
   config.applicationCategoryId = '123456789012345678';
   config.transcriptChannelId = '123456789012345678';
   for (const position of config.positions) {
-    position.roleId = '123456789012345678';
+    position.grantRoleIds = ['123456789012345678'];
   }
   await writeFile(file, JSON.stringify(config), 'utf8');
   const service = new ConfigService(file);
@@ -56,7 +56,7 @@ test('ConfigService permits gradual Discord setup while placeholders remain', as
   }, { allowPlaceholders: true });
 
   assert.deepEqual(partiallyConfigured.reviewerRoleIds, ['123456789012345678']);
-  assert.match(partiallyConfigured.positions[0].roleId, /^PUT_/);
+  assert.match(partiallyConfigured.positions[0].grantRoleIds[0], /^PUT_/);
 });
 
 test('ConfigService seeds an untracked runtime settings file', async () => {
@@ -72,4 +72,19 @@ test('ConfigService seeds an untracked runtime settings file', async () => {
   assert.equal(config.positions.length, 1);
   assert.equal(config.positions[0].name, 'Legionnaire Application');
   assert.equal(JSON.parse(await readFile(runtimeFile, 'utf8')).positions[0].questions.length, 8);
+});
+
+test('ConfigService migrates legacy single approval roles without losing them', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'roleplay-role-migration-'));
+  const file = path.join(directory, 'settings.json');
+  const config = JSON.parse(await readFile('config/applications.json', 'utf8'));
+  delete config.positions[0].grantRoleIds;
+  delete config.positions[0].removeRoleIds;
+  config.positions[0].roleId = '123456789012345678';
+  await writeFile(file, JSON.stringify(config), 'utf8');
+
+  const migrated = await new ConfigService(file).get({ allowPlaceholders: true });
+  assert.deepEqual(migrated.positions[0].grantRoleIds, ['123456789012345678']);
+  assert.deepEqual(migrated.positions[0].removeRoleIds, []);
+  assert.equal('roleId' in migrated.positions[0], false);
 });

@@ -15,7 +15,10 @@
       "id": "legionnaire-application",
       "name": "Legionnaire Application",
       "description": "Apply to join the Imperial Legion.",
-      "roleId": "PUT_LEGIONNAIRE_ROLE_ID_HERE",
+      "grantRoleIds": [
+        "PUT_LEGIONNAIRE_ROLE_ID_HERE"
+      ],
+      "removeRoleIds": [],
       "questions": [
         {
           "id": "join-reason",

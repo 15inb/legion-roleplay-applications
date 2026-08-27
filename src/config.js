@@ -33,10 +33,20 @@ export function validateConfig(config, { allowPlaceholders = false } = {}) {
     positionIds.add(position.id);
     assert(typeof position.name === 'string' && position.name.length >= 1 && position.name.length <= 100, `${prefix}.name must be 1-100 characters`);
     assert(typeof position.description === 'string' && position.description.length <= 100, `${prefix}.description must be 100 characters or fewer`);
-    for (const field of ['roleId']) {
-      assert(typeof position[field] === 'string' && SNOWFLAKE_OR_PLACEHOLDER.test(position[field]), `${prefix}.${field} must be a Discord ID`);
-      if (position[field].startsWith('PUT_')) placeholders.push(`${prefix}.${field}`);
+    assert(Array.isArray(position.grantRoleIds), `${prefix}.grantRoleIds must be an array`);
+    assert(position.grantRoleIds.length >= 1 && position.grantRoleIds.length <= 25, `${prefix}.grantRoleIds must contain 1-25 roles`);
+    assert(Array.isArray(position.removeRoleIds), `${prefix}.removeRoleIds must be an array`);
+    assert(position.removeRoleIds.length <= 25, `${prefix}.removeRoleIds supports at most 25 roles`);
+    for (const field of ['grantRoleIds', 'removeRoleIds']) {
+      const uniqueRoleIds = new Set();
+      for (const [roleIndex, roleId] of position[field].entries()) {
+        assert(typeof roleId === 'string' && SNOWFLAKE_OR_PLACEHOLDER.test(roleId), `${prefix}.${field}[${roleIndex}] must be a Discord role ID`);
+        assert(!uniqueRoleIds.has(roleId), `${prefix}.${field}[${roleIndex}] is duplicated`);
+        uniqueRoleIds.add(roleId);
+        if (roleId.startsWith('PUT_')) placeholders.push(`${prefix}.${field}[${roleIndex}]`);
+      }
     }
+    assert(!position.grantRoleIds.some((roleId) => position.removeRoleIds.includes(roleId)), `${prefix} cannot grant and remove the same role`);
     assert(Array.isArray(position.questions) && position.questions.length > 0, `${prefix}.questions must contain at least one question`);
     const questionIds = new Set();
     for (const [questionIndex, question] of position.questions.entries()) {
@@ -94,6 +104,11 @@ export class ConfigService {
   applyDefaults(config) {
     config.applicationCategoryId ??= 'PUT_APPLICATION_CATEGORY_ID_HERE';
     config.transcriptChannelId ??= 'PUT_TRANSCRIPT_CHANNEL_ID_HERE';
+    for (const position of config.positions ?? []) {
+      position.grantRoleIds ??= position.roleId ? [position.roleId] : ['PUT_POSITION_ROLE_ID_HERE'];
+      position.removeRoleIds ??= [];
+      delete position.roleId;
+    }
     return config;
   }
 

@@ -30,10 +30,19 @@ function isDiscordId(value) {
   return /^\d{17,20}$/.test(value);
 }
 
+function grantRoleIds(positionOrRecord) {
+  return positionOrRecord.grantRoleIds ?? (positionOrRecord.roleId ? [positionOrRecord.roleId] : []);
+}
+
+function removeRoleIds(positionOrRecord) {
+  return positionOrRecord.removeRoleIds ?? [];
+}
+
 function configuredPositions(config) {
   if (!config.reviewerRoleIds.length || config.reviewerRoleIds.some((id) => !isDiscordId(id))
     || !isDiscordId(config.applicationCategoryId) || !isDiscordId(config.transcriptChannelId)) return [];
-  return config.positions.filter((position) => isDiscordId(position.roleId));
+  return config.positions.filter((position) => grantRoleIds(position).length
+    && grantRoleIds(position).every(isDiscordId) && removeRoleIds(position).every(isDiscordId));
 }
 
 function truncate(value, length) {
@@ -108,8 +117,8 @@ function setupMainView(config, notice) {
   const reviewerIds = config.reviewerRoleIds.filter(isDiscordId);
   const readyCount = configuredPositions(config).length;
   const positionLines = config.positions.map((position) => {
-    const role = isDiscordId(position.roleId) ? `<@&${position.roleId}>` : 'role not set';
-    return `• **${position.name}** — ${role}`;
+    const roles = grantRoleIds(position).filter(isDiscordId);
+    return `• **${position.name}** — ${roles.length ? `${roles.length} granted role${roles.length === 1 ? '' : 's'}` : 'roles not set'}`;
   }).join('\n');
   const embed = new EmbedBuilder()
     .setColor(readyCount === config.positions.length && reviewerIds.length ? '#57F287' : '#FEE75C')
@@ -148,7 +157,7 @@ function setupMainView(config, notice) {
     .setPlaceholder('Choose a position to configure')
     .addOptions(config.positions.map((position) => ({
       label: position.name,
-      description: isDiscordId(position.roleId) ? 'Role configured' : 'Role setup required',
+      description: grantRoleIds(position).length && grantRoleIds(position).every(isDiscordId) ? 'Approval roles configured' : 'Role setup required',
       value: position.id,
     })));
   return {
@@ -167,13 +176,20 @@ function setupMainView(config, notice) {
 }
 
 function setupPositionView(config, position, confirmDelete = false, notice) {
-  const roleIsSet = isDiscordId(position.roleId);
+  const grantedRoles = grantRoleIds(position).filter(isDiscordId);
+  const removedRoles = removeRoleIds(position).filter(isDiscordId);
+  const roleIsSet = grantedRoles.length > 0;
   const embed = new EmbedBuilder()
     .setColor(confirmDelete ? '#ED4245' : roleIsSet ? '#57F287' : '#FEE75C')
     .setTitle(confirmDelete ? `Delete ${position.name}?` : `Set up ${position.name}`)
     .setDescription(confirmDelete
       ? 'This removes the position and its questions. Existing submitted applications remain in history.'
-      : `${position.description}\n\n**Granted role:** ${roleIsSet ? `<@&${position.roleId}>` : 'Not set'}`);
+      : [
+          position.description,
+          '',
+          `**Roles granted on approval:** ${roleIsSet ? grantedRoles.map((id) => `<@&${id}>`).join(', ') : 'Not set'}`,
+          `**Roles removed on approval:** ${removedRoles.length ? removedRoles.map((id) => `<@&${id}>`).join(', ') : 'None'}`,
+        ].join('\n'));
   const components = [];
   if (confirmDelete) {
     components.push(new ActionRowBuilder().addComponents(
@@ -181,14 +197,21 @@ function setupPositionView(config, position, confirmDelete = false, notice) {
       new ButtonBuilder().setCustomId(`setup:open:${position.id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
     ));
   } else {
-    const roleMenu = new RoleSelectMenuBuilder()
-      .setCustomId(`setup:role:${position.id}`)
-      .setPlaceholder('Select the role granted on approval')
+    const grantRoleMenu = new RoleSelectMenuBuilder()
+      .setCustomId(`setup:grant-roles:${position.id}`)
+      .setPlaceholder('Select roles granted on approval')
       .setMinValues(1)
-      .setMaxValues(1);
-    if (roleIsSet) roleMenu.setDefaultRoles(position.roleId);
+      .setMaxValues(25);
+    if (grantedRoles.length) grantRoleMenu.setDefaultRoles(...grantedRoles);
+    const removeRoleMenu = new RoleSelectMenuBuilder()
+      .setCustomId(`setup:remove-roles:${position.id}`)
+      .setPlaceholder('Select roles removed on approval (optional)')
+      .setMinValues(0)
+      .setMaxValues(25);
+    if (removedRoles.length) removeRoleMenu.setDefaultRoles(...removedRoles);
     components.push(
-      new ActionRowBuilder().addComponents(roleMenu),
+      new ActionRowBuilder().addComponents(grantRoleMenu),
+      new ActionRowBuilder().addComponents(removeRoleMenu),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`setup:edit-position:${position.id}`).setLabel('Edit details').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`setup:delete-position:${position.id}`).setLabel('Delete position').setStyle(ButtonStyle.Danger),
@@ -714,6 +737,25 @@ async function notifyApplicant(client, record) {
   await user.send({ embeds: [embed] });
 }
 
+export async function applyApprovalRoleChanges(member, record, auditReason, saveDecision, logger = console) {
+  const rolesToGrant = grantRoleIds(record);
+  const rolesToRemove = removeRoleIds(record);
+  const newlyGranted = rolesToGrant.filter((roleId) => !member.roles.cache.has(roleId));
+  const newlyRemoved = rolesToRemove.filter((roleId) => member.roles.cache.has(roleId));
+  let updated;
+  try {
+    if (rolesToGrant.length) await member.roles.add(rolesToGrant, auditReason);
+    if (rolesToRemove.length) await member.roles.remove(rolesToRemove, auditReason);
+    updated = await saveDecision();
+    if (!updated) throw new Error('The application was already decided before the approval could be saved.');
+  } catch (error) {
+    if (newlyGranted.length) await member.roles.remove(newlyGranted, `Rollback failed approval ${record.id}`).catch((rollbackError) => logger.error('Could not roll back granted roles:', rollbackError));
+    if (newlyRemoved.length) await member.roles.add(newlyRemoved, `Rollback failed approval ${record.id}`).catch((rollbackError) => logger.error('Could not restore removed roles:', rollbackError));
+    throw error;
+  }
+  return { updated, rolesToGrant, rolesToRemove };
+}
+
 export function attachBotHandlers(client, {
   configService,
   store,
@@ -795,7 +837,7 @@ export function attachBotHandlers(client, {
       await interaction.reply(ephemeral('That position is no longer available. Please start again.'));
       return;
     }
-    if (!isDiscordId(position.roleId)
+    if (!grantRoleIds(position).length || !grantRoleIds(position).every(isDiscordId) || !removeRoleIds(position).every(isDiscordId)
       || !isDiscordId(config.applicationCategoryId) || !isDiscordId(config.transcriptChannelId)
       || config.reviewerRoleIds.some((id) => !isDiscordId(id))) {
       await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/setup`.'));
@@ -850,7 +892,8 @@ export function attachBotHandlers(client, {
       username: message.author.tag,
       positionId: position.id,
       positionName: position.name,
-      roleId: position.roleId,
+      grantRoleIds: [...grantRoleIds(position)],
+      removeRoleIds: [...removeRoleIds(position)],
       transcriptChannelId: config.transcriptChannelId,
       answers: position.questions.map((question) => ({ question: question.label, value: session.answers[question.id] ?? '' })),
       status: 'pending',
@@ -918,14 +961,18 @@ export function attachBotHandlers(client, {
 
   async function approve(interaction, config, record) {
     const member = await interaction.guild.members.fetch(record.userId);
-    await member.roles.add(record.roleId, `Application ${record.id} approved by ${interaction.user.tag}`);
-    const updated = await store.decide(record.id, {
-      status: 'approved',
-      decidedAt: new Date().toISOString(),
-      decidedBy: interaction.user.id,
-    });
+    const auditReason = `Application ${record.id} approved by ${interaction.user.tag}`;
+    const { updated, rolesToGrant, rolesToRemove } = await applyApprovalRoleChanges(member, record, auditReason, () => store.decide(record.id, {
+        status: 'approved',
+        decidedAt: new Date().toISOString(),
+        decidedBy: interaction.user.id,
+      }), logger);
     await interaction.message.edit(reviewPayload(updated, config));
-    await finalizeApplicationChannel(interaction, updated, config, `Approved **${record.id}** and granted <@&${record.roleId}>.`);
+    const changes = [
+      rolesToGrant.length ? `Granted ${rolesToGrant.map((roleId) => `<@&${roleId}>`).join(', ')}` : null,
+      rolesToRemove.length ? `Removed ${rolesToRemove.map((roleId) => `<@&${roleId}>`).join(', ')}` : null,
+    ].filter(Boolean).join(' • ');
+    await finalizeApplicationChannel(interaction, updated, config, `Approved **${record.id}**. ${changes}.`);
     notifyApplicant(client, updated).catch((error) => logger.warn('Could not DM approved applicant:', error.message));
   }
 
@@ -997,15 +1044,17 @@ export function attachBotHandlers(client, {
           return;
         }
 
-        if (interaction.isRoleSelectMenu() && interaction.customId.startsWith('setup:role:')) {
+        if (interaction.isRoleSelectMenu() && /^setup:(grant|remove)-roles:/.test(interaction.customId)) {
+          const removing = interaction.customId.startsWith('setup:remove-roles:');
           const positionId = interaction.customId.split(':')[2];
           const next = await configService.update((draft) => {
             const position = draft.positions.find((item) => item.id === positionId);
             if (!position) throw new Error('That position no longer exists.');
-            position.roleId = interaction.values[0];
+            if (removing) position.removeRoleIds = interaction.values;
+            else position.grantRoleIds = interaction.values;
           }, { allowPlaceholders: true });
           const position = next.positions.find((item) => item.id === positionId);
-          await interaction.update(setupPositionView(next, position, false, 'Granted role saved.'));
+          await interaction.update(setupPositionView(next, position, false, removing ? 'Roles removed on approval saved.' : 'Roles granted on approval saved.'));
           return;
         }
 
@@ -1066,7 +1115,8 @@ export function attachBotHandlers(client, {
                   id: uniquePositionId(name, draft.positions),
                   name,
                   description,
-                  roleId: 'PUT_POSITION_ROLE_ID_HERE',
+                  grantRoleIds: ['PUT_POSITION_ROLE_ID_HERE'],
+                  removeRoleIds: [],
                   questions: [{
                     id: 'character-name',
                     label: "What is your character's name?",
@@ -1081,7 +1131,7 @@ export function attachBotHandlers(client, {
               ? next.positions.find((item) => item.id === positionId)
               : next.positions.at(-1);
             await interaction.reply({
-              ...setupPositionView(next, position, false, editing ? 'Position updated.' : 'Position added. Now select its granted role.'),
+              ...setupPositionView(next, position, false, editing ? 'Position updated.' : 'Position added. Now select its approval roles.'),
               flags: MessageFlags.Ephemeral,
             });
           } catch (error) {

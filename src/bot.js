@@ -26,6 +26,11 @@ function ephemeral(content, extra = {}) {
   return { content, flags: MessageFlags.Ephemeral, ...extra };
 }
 
+function editDeferredReply(interaction, payload) {
+  const { flags: _flags, ...editablePayload } = payload;
+  return interaction.editReply(editablePayload);
+}
+
 function isDiscordId(value) {
   return /^\d{17,20}$/.test(value);
 }
@@ -825,26 +830,26 @@ export function attachBotHandlers(client, {
   async function startApplication(interaction, config, positionId) {
     const block = await applicationBlock(interaction.guildId, interaction.user.id);
     if (block) {
-      await interaction.reply(applicationBlockPayload(block));
+      await editDeferredReply(interaction, applicationBlockPayload(block));
       return;
     }
     if (!config.allowMultiplePendingApplications && await store.hasPending(interaction.guildId, interaction.user.id)) {
-      await interaction.reply(ephemeral('You already have an application awaiting review. Use `/status` to check it.'));
+      await editDeferredReply(interaction, ephemeral('You already have an application awaiting review. Use `/status` to check it.'));
       return;
     }
     const position = config.positions.find((item) => item.id === positionId);
     if (!position) {
-      await interaction.reply(ephemeral('That position is no longer available. Please start again.'));
+      await editDeferredReply(interaction, ephemeral('That position is no longer available. Please start again.'));
       return;
     }
     if (!grantRoleIds(position).length || !grantRoleIds(position).every(isDiscordId) || !removeRoleIds(position).every(isDiscordId)
       || !isDiscordId(config.applicationCategoryId) || !isDiscordId(config.transcriptChannelId)
       || config.reviewerRoleIds.some((id) => !isDiscordId(id))) {
-      await interaction.reply(ephemeral('That application is not fully configured yet. A server manager must run `/setup`.'));
+      await editDeferredReply(interaction, ephemeral('That application is not fully configured yet. A server manager must run `/setup`.'));
       return;
     }
     if (sessionForUser(interaction.user.id)) {
-      await interaction.reply(ephemeral('You already have an unfinished application interview in your DMs. Finish it or type `cancel` there before starting another.'));
+      await editDeferredReply(interaction, ephemeral('You already have an unfinished application interview in your DMs. Finish it or type `cancel` there before starting another.'));
       return;
     }
     const token = crypto.randomBytes(9).toString('base64url');
@@ -868,10 +873,10 @@ export function attachBotHandlers(client, {
     } catch (error) {
       sessions.delete(token);
       logger.warn(`Could not start DM application for ${interaction.user.id}:`, error.message);
-      await interaction.reply(ephemeral('I could not DM you. Enable direct messages from server members, then press the application button again.'));
+      await editDeferredReply(interaction, ephemeral('I could not DM you. Enable direct messages from server members, then press the application button again.'));
       return;
     }
-    await interaction.reply({
+    await editDeferredReply(interaction, {
       embeds: [new EmbedBuilder()
         .setColor('#57F287')
         .setTitle('Application Started in DMs')
@@ -993,6 +998,9 @@ export function attachBotHandlers(client, {
   client.on('interactionCreate', async (interaction) => {
     try {
       if (!interaction.inGuild()) return;
+      const directApplicationStart = (interaction.isStringSelectMenu?.() && interaction.customId === 'application:position')
+        || (interaction.isButton?.() && interaction.customId.startsWith('application:start:'));
+      if (directApplicationStart) await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const config = await configService.get({ allowPlaceholders: true });
 
       if ((interaction.isMessageComponent() || interaction.isModalSubmit()) && interaction.customId.startsWith('setup:')) {

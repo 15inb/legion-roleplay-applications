@@ -101,9 +101,10 @@ test('application interviews begin in DMs with the full question text', async ()
   let handler;
   let dm;
   let response;
+  const events = [];
   const client = { on: (event, callback) => { if (event === 'interactionCreate') handler = callback; } };
   attachBotHandlers(client, {
-    configService: { get: async () => config },
+    configService: { get: async () => { events.push('config'); return config; } },
     store: { hasPending: async () => false },
     logger: console,
   });
@@ -119,10 +120,12 @@ test('application interviews begin in DMs with the full question text', async ()
     isChatInputCommand: () => false,
     isStringSelectMenu: () => true,
     isButton: () => false,
-    reply: async (payload) => { response = payload; },
+    deferReply: async () => { events.push('defer'); },
+    editReply: async (payload) => { response = payload; },
   };
 
   await handler(interaction);
+  assert.deepEqual(events.slice(0, 2), ['defer', 'config']);
   assert.equal(dm.embeds[0].data.description, config.positions[0].questions[0].label);
   assert.match(dm.embeds[0].data.title, /Question 1\/8/);
   assert.match(dm.embeds[0].data.footer.text, /Type “back”/);
@@ -165,7 +168,9 @@ test('application interviews enforce permanent bars and the 24-hour denial coold
     isModalSubmit: () => false,
     isChatInputCommand: () => false,
     isStringSelectMenu: () => true,
-    reply: async (payload) => { responses.push(payload); },
+    isButton: () => false,
+    deferReply: async () => {},
+    editReply: async (payload) => { responses.push(payload); },
   });
 
   await attempt('barred-user');
@@ -295,7 +300,8 @@ test('application panels create one direct button for each selected application'
     isChatInputCommand: () => false,
     isStringSelectMenu: () => false,
     isButton: () => true,
-    reply: async (payload) => { directResponse = payload; },
+    deferReply: async () => {},
+    editReply: async (payload) => { directResponse = payload; },
   });
   assert.match(directDm.embeds[0].data.title, /Officer Application/);
   assert.match(directResponse.embeds[0].data.title, /Application Started in DMs/);
@@ -362,7 +368,8 @@ test('a completed application creates and stores a private review channel', asyn
     isMessageComponent: () => true,
     isModalSubmit: () => false,
     isStringSelectMenu: () => true,
-    reply: async (payload) => { startResponse = payload; },
+    deferReply: async () => {},
+    editReply: async (payload) => { startResponse = payload; },
   });
   assert.match(startResponse.embeds[0].data.title, /Application Started in DMs/);
   assert.match(dmMessages[0].embeds[0].data.title, /Question 1\/8/);

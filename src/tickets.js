@@ -13,6 +13,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { buildDiscordTranscriptPages } from './bot.js';
 
 export class TicketStore {
   constructor(filePath = path.resolve('data/tickets.json')) {
@@ -35,6 +36,7 @@ export class TicketStore {
         ...panel,
         accessRoleIds: panel.accessRoleIds ?? panel.staffRoleIds ?? [],
         question: panel.question ?? 'Describe this roleplay ticket',
+        transcriptChannelId: panel.transcriptChannelId ?? null,
       }));
       this.tickets = parsed.tickets.map((ticket) => ({
         ...ticket,
@@ -157,16 +159,19 @@ async function createTicketPanel(interaction, store) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const panelChannel = interaction.options.getChannel('panel-channel', true);
   const category = interaction.options.getChannel('ticket-category', true);
+  const transcriptChannel = interaction.options.getChannel('transcript-channel', true);
   const accessRole = interaction.options.getRole('access-role', true);
   if (accessRole.id === interaction.guild.roles.everyone.id) throw new Error('The @everyone role cannot be used as a private ticket access role.');
   if (!panelChannel.isTextBased() || panelChannel.guildId !== interaction.guildId) throw new Error('The panel channel must be a text channel in this server.');
   if (category.type !== ChannelType.GuildCategory || category.guildId !== interaction.guildId) throw new Error('The ticket destination must be a category in this server.');
+  if (!transcriptChannel.isTextBased() || transcriptChannel.guildId !== interaction.guildId) throw new Error('The transcript channel must be a text channel in this server.');
 
   const panel = {
     id: crypto.randomBytes(8).toString('hex'),
     guildId: interaction.guildId,
     panelChannelId: panelChannel.id,
     categoryId: category.id,
+    transcriptChannelId: transcriptChannel.id,
     name: interaction.options.getString('name', true).trim(),
     description: interaction.options.getString('description', true).trim(),
     question: interaction.options.getString('question', true).trim(),
@@ -183,7 +188,7 @@ async function createTicketPanel(interaction, store) {
     await message.delete().catch(() => {});
     throw error;
   }
-  await interaction.editReply({ content: `Ticket panel created in <#${panelChannel.id}>. New tickets will be created under **${category.name}**.` });
+  await interaction.editReply({ content: `Ticket panel created in <#${panelChannel.id}>. New tickets will be created under **${category.name}**, with transcripts saved in <#${transcriptChannel.id}>.` });
 }
 
 async function showTicketDescriptionModal(interaction, store) {
@@ -228,6 +233,7 @@ async function openTicket(interaction, store) {
     username: interaction.user.tag,
     description: interaction.fields.getTextInputValue('description').trim(),
     accessRoleIds: panel.accessRoleIds,
+    transcriptChannelId: panel.transcriptChannelId,
     status: 'open',
     createdAt: new Date().toISOString(),
   };
@@ -286,13 +292,92 @@ async function requestTicketClose(interaction, store) {
   await interaction.editReply(payload);
 }
 
-async function confirmTicketClose(interaction, store) {
+async function fetchTicketMessages(channel, limit = 1000) {
+  const messages = [];
+  let before;
+  while (messages.length < limit) {
+    const batch = await channel.messages.fetch({ limit: Math.min(100, limit - messages.length), ...(before ? { before } : {}) });
+    if (!batch.size) break;
+    messages.push(...batch.values());
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+  return messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+}
+
+async function postTicketTranscriptPages(channel, pages, ticket, panelName) {
+  for (const [index, page] of pages.entries()) {
+    await channel.send({
+      embeds: [new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle(`Ticket Transcript • Page ${index + 1} of ${pages.length}`)
+        .setDescription(page)
+        .setFooter({ text: `${panelName} • ${ticket.id}` })],
+      allowedMentions: { parse: [] },
+    });
+  }
+}
+
+export async function archiveTicketTranscript(interaction, ticket, store, logger = console) {
+  if (!ticket.transcriptChannelId) {
+    throw new Error('This ticket panel has no transcript channel configured. Create a new panel with `/tickets create`; this ticket was kept open.');
+  }
+  const panel = await store.getPanel(ticket.panelId);
+  const transcriptChannel = await interaction.guild.channels.fetch(ticket.transcriptChannelId);
+  if (!transcriptChannel?.isTextBased()) throw new Error('The configured ticket transcript channel is unavailable. This ticket was kept open.');
+  const messages = await fetchTicketMessages(interaction.channel);
+  const closedAt = new Date();
+  const summary = new EmbedBuilder()
+    .setColor('#5865F2')
+    .setTitle(`${panel?.name ?? 'Roleplay Ticket'} — CLOSED`)
+    .setDescription(ticket.description)
+    .addFields(
+      { name: 'Ticket ID', value: ticket.id, inline: true },
+      { name: 'Opened by', value: `<@${ticket.userId}>`, inline: true },
+      { name: 'Closed by', value: `<@${interaction.user.id}>`, inline: true },
+      { name: 'Opened', value: `<t:${Math.floor(new Date(ticket.createdAt).getTime() / 1000)}:f>`, inline: true },
+      { name: 'Closed', value: `<t:${Math.floor(closedAt.getTime() / 1000)}:f>`, inline: true },
+      { name: 'Messages', value: String(messages.length), inline: true },
+    )
+    .setTimestamp(closedAt);
+  const archiveMessage = await transcriptChannel.send({ embeds: [summary], allowedMentions: { parse: [] } });
+  const pages = messages.length ? buildDiscordTranscriptPages(messages) : ['_No messages were found in the ticket channel._'];
+  let destination = transcriptChannel;
+  let thread;
+  try {
+    thread = await archiveMessage.startThread({
+      name: `ticket-${ticket.id}-${ticket.username}`.slice(0, 100),
+      autoArchiveDuration: 1440,
+      reason: `Discord transcript for ticket ${ticket.id}`,
+    });
+    destination = thread;
+  } catch (error) {
+    logger.warn(`Could not create transcript thread for ticket ${ticket.id}; posting pages in the archive channel:`, error.message);
+  }
+  try {
+    await postTicketTranscriptPages(destination, pages, ticket, panel?.name ?? 'Roleplay Ticket');
+  } catch (error) {
+    if (!thread) throw error;
+    logger.warn(`Could not post ticket transcript in thread ${ticket.id}; using the archive channel:`, error.message);
+    await thread.delete('Ticket transcript thread failed; archive channel fallback used').catch(() => {});
+    thread = undefined;
+    await postTicketTranscriptPages(transcriptChannel, pages, ticket, panel?.name ?? 'Roleplay Ticket');
+  }
+  if (thread) {
+    summary.addFields({ name: 'Read in Discord', value: `<#${thread.id}>` });
+    await archiveMessage.edit({ embeds: [summary] }).catch((error) => logger.warn(`Could not add ticket transcript link ${ticket.id}:`, error.message));
+  }
+  return { archiveMessage, thread, messageCount: messages.length };
+}
+
+async function confirmTicketClose(interaction, store, logger) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const ticketId = interaction.customId.split(':')[2];
   const ticket = await store.findOpenByChannel(interaction.guildId, interaction.channelId);
   if (!ticket || ticket.id !== ticketId) throw new Error('This ticket is already closed or no longer exists.');
   if (!canCloseTicket(interaction, ticket)) throw new Error('Only the ticket opener or configured roleplay ticket role can close this ticket.');
-  await interaction.editReply({ content: 'Closing this ticket…' });
+  await interaction.editReply({ content: 'Saving the transcript before closing this ticket…' });
+  await archiveTicketTranscript(interaction, ticket, store, logger);
   await interaction.channel.delete(`Ticket ${ticket.id} closed by ${interaction.user.tag}`);
   await store.closeTicket(ticket.id, interaction.user.id);
 }
@@ -327,7 +412,7 @@ export function attachTicketHandlers(client, { store, logger = console }) {
         }
       }
       else if (interaction.customId.startsWith('ticket:close:')) await requestTicketClose(interaction, store);
-      else if (interaction.customId.startsWith('ticket:confirm-close:')) await confirmTicketClose(interaction, store);
+      else if (interaction.customId.startsWith('ticket:confirm-close:')) await confirmTicketClose(interaction, store, logger);
       else if (interaction.customId === 'ticket:cancel-close') await interaction.update({ content: 'Ticket kept open.', components: [] });
     } catch (error) {
       logger.error('Ticket interaction failed:', error);

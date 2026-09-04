@@ -84,6 +84,7 @@ export const commands = [
       .setDescription('Create a button panel that opens private tickets.')
       .addChannelOption((option) => option.setName('panel-channel').setDescription('Where to post the ticket button.').addChannelTypes(ChannelType.GuildText).setRequired(true))
       .addChannelOption((option) => option.setName('ticket-category').setDescription('Category where new ticket channels will be created.').addChannelTypes(ChannelType.GuildCategory).setRequired(true))
+      .addChannelOption((option) => option.setName('transcript-channel').setDescription('Channel where closed ticket transcripts will be saved.').addChannelTypes(ChannelType.GuildText).setRequired(true))
       .addStringOption((option) => option.setName('name').setDescription('Ticket panel name and title.').setMinLength(1).setMaxLength(100).setRequired(true))
       .addStringOption((option) => option.setName('description').setDescription('Explain what this ticket button is for.').setMinLength(1).setMaxLength(4000).setRequired(true))
       .addStringOption((option) => option.setName('question').setDescription('Question shown when somebody opens a ticket.').setMinLength(1).setMaxLength(45).setRequired(true))

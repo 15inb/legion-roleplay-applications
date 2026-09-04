@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { commands } from '../src/commands.js';
-import { attachTicketHandlers, TicketStore, ticketPanelPayload } from '../src/tickets.js';
+import { archiveTicketTranscript, attachTicketHandlers, TicketStore, ticketPanelPayload } from '../src/tickets.js';
 
 test('ticket command exposes customizable panel and destination options', () => {
   const command = commands.find((item) => item.name === 'tickets');
@@ -13,6 +13,7 @@ test('ticket command exposes customizable panel and destination options', () => 
   assert.deepEqual(create.options.map((item) => item.name), [
     'panel-channel',
     'ticket-category',
+    'transcript-channel',
     'name',
     'description',
     'question',
@@ -47,6 +48,53 @@ test('ticket panels and open ticket state persist across store instances', async
   assert.equal(await new TicketStore(file).findOpen('panel', 'user'), null);
 });
 
+test('ticket transcripts are posted as readable Discord pages to the configured channel', async () => {
+  const message = {
+    id: 'message-1',
+    author: { id: 'user', tag: 'roleplayer' },
+    content: 'The petition is delivered to the governor.',
+    embeds: [],
+    attachments: new Map(),
+    createdTimestamp: Date.parse('2026-09-04T12:00:00.000Z'),
+  };
+  const batch = new Map([[message.id, message]]);
+  batch.last = () => message;
+  const ticketChannel = { messages: { fetch: async () => batch } };
+  const threadMessages = [];
+  const thread = { id: 'thread', send: async (payload) => { threadMessages.push(payload); }, delete: async () => {} };
+  let summaryPayload;
+  let editedSummary;
+  const transcriptChannel = {
+    isTextBased: () => true,
+    send: async (payload) => {
+      summaryPayload = payload;
+      return {
+        startThread: async () => thread,
+        edit: async (payloadToEdit) => { editedSummary = payloadToEdit; },
+      };
+    },
+  };
+  const ticket = {
+    id: 'TICKET1',
+    panelId: 'panel',
+    transcriptChannelId: 'archive',
+    userId: 'user',
+    username: 'roleplayer',
+    description: 'A petition to the governor.',
+    createdAt: '2026-09-04T11:00:00.000Z',
+  };
+  const result = await archiveTicketTranscript({
+    channel: ticketChannel,
+    guild: { channels: { fetch: async () => transcriptChannel } },
+    user: { id: 'closer' },
+  }, ticket, { getPanel: async () => ({ name: 'Governor Petitions' }) });
+
+  assert.equal(result.messageCount, 1);
+  assert.match(summaryPayload.embeds[0].data.description, /petition to the governor/i);
+  assert.match(threadMessages[0].embeds[0].data.description, /petition is delivered/i);
+  assert.equal(editedSummary.embeds[0].data.fields.at(-1).value, '<#thread>');
+});
+
 test('a ticket button creates a private channel in its configured category', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ticket-open-flow-'));
   const store = new TicketStore(path.join(directory, 'tickets.json'));
@@ -65,9 +113,11 @@ test('a ticket button creates a private channel in its configured category', asy
     },
   };
   const category = { id: '444444444444444444', guildId: '111111111111111111', type: ChannelType.GuildCategory, name: 'Tickets' };
+  const transcriptChannel = { id: '499999999999999999', guildId: '111111111111111111', isTextBased: () => true };
   const optionValues = {
     'panel-channel': panelChannel,
     'ticket-category': category,
+    'transcript-channel': transcriptChannel,
     name: 'Support',
     description: 'Open a private roleplay ticket.',
     question: 'What is this roleplay ticket about?',
@@ -152,4 +202,5 @@ test('a ticket button creates a private channel in its configured category', asy
   const stored = await store.findOpen(panelId, '888888888888888888');
   assert.equal(stored.channelId, ticketChannel.id);
   assert.equal(stored.description, 'A patrol encounter near the western gate.');
+  assert.equal(stored.transcriptChannelId, transcriptChannel.id);
 });

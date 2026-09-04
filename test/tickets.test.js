@@ -15,9 +15,12 @@ test('ticket command exposes customizable panel and destination options', () => 
     'ticket-category',
     'name',
     'description',
-    'button-name',
     'access-role',
+    'button-name',
   ]);
+  const firstOptional = create.options.findIndex((item) => !item.required);
+  assert.ok(create.options.slice(0, firstOptional).every((item) => item.required));
+  assert.ok(create.options.slice(firstOptional).every((item) => !item.required));
 });
 
 test('ticket panels render their configured name, description, and button label', () => {

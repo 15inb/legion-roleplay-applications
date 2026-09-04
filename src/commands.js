@@ -87,7 +87,7 @@ export const commands = [
       .addStringOption((option) => option.setName('name').setDescription('Ticket panel name and title.').setMinLength(1).setMaxLength(100).setRequired(true))
       .addStringOption((option) => option.setName('description').setDescription('Explain what this ticket button is for.').setMinLength(1).setMaxLength(4000).setRequired(true))
       .addStringOption((option) => option.setName('button-name').setDescription('Text displayed on the ticket button.').setMinLength(1).setMaxLength(80))
-      .addRoleOption((option) => option.setName('support-role').setDescription('Optional staff role for tickets from this panel.')))
+      .addRoleOption((option) => option.setName('access-role').setDescription('Role allowed to view and participate in these roleplay tickets.').setRequired(true)))
     .addSubcommand((subcommand) => subcommand
       .setName('close')
       .setDescription('Close the ticket channel you are currently viewing.')),

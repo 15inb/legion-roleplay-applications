@@ -8,7 +8,10 @@ import {
   ChannelType,
   EmbedBuilder,
   MessageFlags,
+  ModalBuilder,
   PermissionFlagsBits,
+  TextInputBuilder,
+  TextInputStyle,
 } from 'discord.js';
 
 export class TicketStore {
@@ -28,8 +31,14 @@ export class TicketStore {
       if (!parsed || !Array.isArray(parsed.panels) || !Array.isArray(parsed.tickets)) {
         throw new Error('Ticket data must contain panel and ticket arrays.');
       }
-      this.panels = parsed.panels;
-      this.tickets = parsed.tickets;
+      this.panels = parsed.panels.map((panel) => ({
+        ...panel,
+        accessRoleIds: panel.accessRoleIds ?? panel.staffRoleIds ?? [],
+      }));
+      this.tickets = parsed.tickets.map((ticket) => ({
+        ...ticket,
+        accessRoleIds: ticket.accessRoleIds ?? ticket.staffRoleIds ?? [],
+      }));
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
@@ -132,7 +141,7 @@ function closeConfirmation(ticket) {
 function canCloseTicket(interaction, ticket) {
   return interaction.user.id === ticket.userId
     || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
-    || ticket.staffRoleIds.some((roleId) => interaction.member?.roles?.cache?.has(roleId));
+    || ticket.accessRoleIds.some((roleId) => interaction.member?.roles?.cache?.has(roleId));
 }
 
 function safeChannelName(username, ticketId) {
@@ -140,18 +149,15 @@ function safeChannelName(username, ticketId) {
   return `ticket-${safeName}-${ticketId.toLowerCase()}`;
 }
 
-async function createTicketPanel(interaction, store, configService) {
+async function createTicketPanel(interaction, store) {
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
     throw new Error('You need the Manage Server permission to create ticket panels.');
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const panelChannel = interaction.options.getChannel('panel-channel', true);
   const category = interaction.options.getChannel('ticket-category', true);
-  const supportRole = interaction.options.getRole('support-role');
-  const config = await configService.get({ allowPlaceholders: true });
-  if (supportRole?.id === interaction.guild.roles.everyone.id) throw new Error('The @everyone role cannot be used as a private ticket support role.');
-  const staffRoleIds = [...new Set(supportRole ? [supportRole.id] : config.reviewerRoleIds.filter((id) => /^\d{17,20}$/.test(id)))];
-  if (!staffRoleIds.length) throw new Error('Select a support role, or configure at least one reviewer role with `/setup`.');
+  const accessRole = interaction.options.getRole('access-role', true);
+  if (accessRole.id === interaction.guild.roles.everyone.id) throw new Error('The @everyone role cannot be used as a private ticket access role.');
   if (!panelChannel.isTextBased() || panelChannel.guildId !== interaction.guildId) throw new Error('The panel channel must be a text channel in this server.');
   if (category.type !== ChannelType.GuildCategory || category.guildId !== interaction.guildId) throw new Error('The ticket destination must be a category in this server.');
 
@@ -163,7 +169,7 @@ async function createTicketPanel(interaction, store, configService) {
     name: interaction.options.getString('name', true).trim(),
     description: interaction.options.getString('description', true).trim(),
     buttonName: interaction.options.getString('button-name')?.trim() || 'Open Ticket',
-    staffRoleIds,
+    accessRoleIds: [accessRole.id],
     createdAt: new Date().toISOString(),
     createdBy: interaction.user.id,
   };
@@ -176,6 +182,23 @@ async function createTicketPanel(interaction, store, configService) {
     throw error;
   }
   await interaction.editReply({ content: `Ticket panel created in <#${panelChannel.id}>. New tickets will be created under **${category.name}**.` });
+}
+
+async function showTicketDescriptionModal(interaction) {
+  const panelId = interaction.customId.split(':')[2];
+  const description = new TextInputBuilder()
+    .setCustomId('description')
+    .setLabel('Describe this roleplay ticket')
+    .setPlaceholder('Explain the scene, request, or roleplay situation…')
+    .setStyle(TextInputStyle.Paragraph)
+    .setMinLength(1)
+    .setMaxLength(2000)
+    .setRequired(true);
+  const modal = new ModalBuilder()
+    .setCustomId(`ticket:create:${panelId}`)
+    .setTitle('Open Roleplay Ticket')
+    .addComponents(new ActionRowBuilder().addComponents(description));
+  await interaction.showModal(modal);
 }
 
 async function openTicket(interaction, store) {
@@ -199,7 +222,8 @@ async function openTicket(interaction, store) {
     guildId: interaction.guildId,
     userId: interaction.user.id,
     username: interaction.user.tag,
-    staffRoleIds: panel.staffRoleIds,
+    description: interaction.fields.getTextInputValue('description').trim(),
+    accessRoleIds: panel.accessRoleIds,
     status: 'open',
     createdAt: new Date().toISOString(),
   };
@@ -214,11 +238,11 @@ async function openTicket(interaction, store) {
     name: safeChannelName(interaction.user.username, ticket.id),
     type: ChannelType.GuildText,
     parent: panel.categoryId,
-    topic: `${panel.name} • ${interaction.user.tag} • ${ticket.id}`,
+    topic: `${ticket.description}\n— ${panel.name} • ${interaction.user.tag} • ${ticket.id}`.slice(0, 1024),
     permissionOverwrites: [
       { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       { id: interaction.user.id, allow: memberPermissions },
-      ...panel.staffRoleIds.map((roleId) => ({ id: roleId, allow: memberPermissions })),
+      ...panel.accessRoleIds.map((roleId) => ({ id: roleId, allow: memberPermissions })),
       { id: interaction.client.user.id, allow: [...memberPermissions, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages] },
     ],
     reason: `Ticket ${ticket.id} opened by ${interaction.user.tag}`,
@@ -227,15 +251,19 @@ async function openTicket(interaction, store) {
   await store.createTicket(ticket);
   try {
     await channel.send({
-      content: [`<@${ticket.userId}>`, ...ticket.staffRoleIds.map((roleId) => `<@&${roleId}>`)].join(' '),
+      content: [`<@${ticket.userId}>`, ...ticket.accessRoleIds.map((roleId) => `<@&${roleId}>`)].join(' '),
       embeds: [new EmbedBuilder()
         .setColor('#57F287')
         .setTitle(panel.name)
-        .setDescription(`Welcome <@${ticket.userId}>. Describe what you need help with and a staff member will respond here.`)
-        .addFields({ name: 'Ticket ID', value: ticket.id, inline: true })
+        .setDescription(ticket.description)
+        .addFields(
+          { name: 'Opened by', value: `<@${ticket.userId}>`, inline: true },
+          { name: 'Ticket ID', value: ticket.id, inline: true },
+        )
+        .setFooter({ text: 'Use this private channel for the roleplay associated with this ticket.' })
         .setTimestamp()],
       components: [ticketControls(ticket)],
-      allowedMentions: { users: [ticket.userId], roles: ticket.staffRoleIds },
+      allowedMentions: { users: [ticket.userId], roles: ticket.accessRoleIds },
     });
   } catch (error) {
     await store.removeTicket(ticket.id);
@@ -249,7 +277,7 @@ async function requestTicketClose(interaction, store) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const ticket = await store.findOpenByChannel(interaction.guildId, interaction.channelId);
   if (!ticket) throw new Error('Use this inside an open ticket channel.');
-  if (!canCloseTicket(interaction, ticket)) throw new Error('Only the ticket opener or ticket staff can close this ticket.');
+  if (!canCloseTicket(interaction, ticket)) throw new Error('Only the ticket opener or configured roleplay ticket role can close this ticket.');
   const { flags: _flags, ...payload } = closeConfirmation(ticket);
   await interaction.editReply(payload);
 }
@@ -259,26 +287,29 @@ async function confirmTicketClose(interaction, store) {
   const ticketId = interaction.customId.split(':')[2];
   const ticket = await store.findOpenByChannel(interaction.guildId, interaction.channelId);
   if (!ticket || ticket.id !== ticketId) throw new Error('This ticket is already closed or no longer exists.');
-  if (!canCloseTicket(interaction, ticket)) throw new Error('Only the ticket opener or ticket staff can close this ticket.');
+  if (!canCloseTicket(interaction, ticket)) throw new Error('Only the ticket opener or configured roleplay ticket role can close this ticket.');
   await interaction.editReply({ content: 'Closing this ticket…' });
   await interaction.channel.delete(`Ticket ${ticket.id} closed by ${interaction.user.tag}`);
   await store.closeTicket(ticket.id, interaction.user.id);
 }
 
-export function attachTicketHandlers(client, { store, configService, logger = console }) {
+export function attachTicketHandlers(client, { store, logger = console }) {
   const openingTickets = new Set();
   client.on('interactionCreate', async (interaction) => {
     const isTicketCommand = interaction.isChatInputCommand() && interaction.commandName === 'tickets';
     const isTicketButton = interaction.isButton() && interaction.customId.startsWith('ticket:');
-    if (!isTicketCommand && !isTicketButton) return;
+    const isTicketModal = interaction.isModalSubmit() && interaction.customId.startsWith('ticket:create:');
+    if (!isTicketCommand && !isTicketButton && !isTicketModal) return;
     try {
       if (!interaction.inGuild()) throw new Error('Tickets can only be used inside a server.');
       if (isTicketCommand) {
-        if (interaction.options.getSubcommand() === 'create') await createTicketPanel(interaction, store, configService);
+        if (interaction.options.getSubcommand() === 'create') await createTicketPanel(interaction, store);
         else await requestTicketClose(interaction, store);
         return;
       }
       if (interaction.customId.startsWith('ticket:open:')) {
+        await showTicketDescriptionModal(interaction);
+      } else if (interaction.customId.startsWith('ticket:create:')) {
         const openingKey = `${interaction.customId}:${interaction.user.id}`;
         if (openingTickets.has(openingKey)) {
           await interaction.reply({ content: 'Your ticket is already being created. Please wait.', flags: MessageFlags.Ephemeral });

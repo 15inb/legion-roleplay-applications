@@ -16,7 +16,7 @@ test('ticket command exposes customizable panel and destination options', () => 
     'name',
     'description',
     'button-name',
-    'support-role',
+    'access-role',
   ]);
 });
 
@@ -48,11 +48,7 @@ test('a ticket button creates a private channel in its configured category', asy
   const store = new TicketStore(path.join(directory, 'tickets.json'));
   const handlers = [];
   const client = { user: { id: '999999999999999999' }, on: (event, callback) => { if (event === 'interactionCreate') handlers.push(callback); } };
-  attachTicketHandlers(client, {
-    store,
-    configService: { get: async () => ({ reviewerRoleIds: ['777777777777777777'] }) },
-    logger: console,
-  });
+  attachTicketHandlers(client, { store, logger: console });
 
   let panelPayload;
   const panelChannel = {
@@ -69,8 +65,9 @@ test('a ticket button creates a private channel in its configured category', asy
     'panel-channel': panelChannel,
     'ticket-category': category,
     name: 'Support',
-    description: 'Open a private support ticket.',
-    'button-name': 'Open Support Ticket',
+    description: 'Open a private roleplay ticket.',
+    'button-name': 'Open RP Ticket',
+    'access-role': { id: '777777777777777777' },
   };
   let createResponse;
   await handlers[0]({
@@ -83,16 +80,30 @@ test('a ticket button creates a private channel in its configured category', asy
       getSubcommand: () => 'create',
       getChannel: (name) => optionValues[name],
       getString: (name) => optionValues[name] ?? null,
-      getRole: () => null,
+      getRole: (name) => optionValues[name] ?? null,
     },
     inGuild: () => true,
     isChatInputCommand: () => true,
     isButton: () => false,
+    isModalSubmit: () => false,
     deferReply: async () => {},
     editReply: async (payload) => { createResponse = payload; },
   });
   const panelId = panelPayload.components[0].components[0].data.custom_id.split(':')[2];
   assert.match(createResponse.content, /Ticket panel created/);
+
+  let modal;
+  await handlers[0]({
+    customId: `ticket:open:${panelId}`,
+    user: { id: '888888888888888888' },
+    inGuild: () => true,
+    isChatInputCommand: () => false,
+    isButton: () => true,
+    isModalSubmit: () => false,
+    showModal: async (value) => { modal = value; },
+  });
+  assert.equal(modal.data.custom_id, `ticket:create:${panelId}`);
+  assert.match(modal.components[0].components[0].data.label, /roleplay ticket/i);
 
   let channelOptions;
   let welcomePayload;
@@ -110,23 +121,29 @@ test('a ticket button creates a private channel in its configured category', asy
     },
   };
   await handlers[0]({
-    customId: `ticket:open:${panelId}`,
+    customId: `ticket:create:${panelId}`,
     guildId: '111111111111111111',
     guild,
     client,
     user: { id: '888888888888888888', username: 'Test User', tag: 'test-user' },
     inGuild: () => true,
     isChatInputCommand: () => false,
-    isButton: () => true,
+    isButton: () => false,
+    isModalSubmit: () => true,
+    fields: { getTextInputValue: () => 'A patrol encounter near the western gate.' },
     deferReply: async () => {},
     editReply: async (payload) => { openResponse = payload; },
   });
 
   assert.equal(channelOptions.parent, category.id);
   assert.equal(channelOptions.type, ChannelType.GuildText);
+  assert.match(channelOptions.topic, /patrol encounter/);
   assert.ok(channelOptions.permissionOverwrites.some((overwrite) => overwrite.id === '888888888888888888'));
   assert.ok(channelOptions.permissionOverwrites.some((overwrite) => overwrite.id === '777777777777777777'));
   assert.match(welcomePayload.embeds[0].data.title, /Support/);
+  assert.match(welcomePayload.embeds[0].data.description, /patrol encounter/);
   assert.match(openResponse.content, /private ticket is ready/);
-  assert.equal((await store.findOpen(panelId, '888888888888888888')).channelId, ticketChannel.id);
+  const stored = await store.findOpen(panelId, '888888888888888888');
+  assert.equal(stored.channelId, ticketChannel.id);
+  assert.equal(stored.description, 'A patrol encounter near the western gate.');
 });

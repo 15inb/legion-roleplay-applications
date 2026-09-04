@@ -86,6 +86,7 @@ export const commands = [
       .addChannelOption((option) => option.setName('ticket-category').setDescription('Category where new ticket channels will be created.').addChannelTypes(ChannelType.GuildCategory).setRequired(true))
       .addStringOption((option) => option.setName('name').setDescription('Ticket panel name and title.').setMinLength(1).setMaxLength(100).setRequired(true))
       .addStringOption((option) => option.setName('description').setDescription('Explain what this ticket button is for.').setMinLength(1).setMaxLength(4000).setRequired(true))
+      .addStringOption((option) => option.setName('question').setDescription('Question shown when somebody opens a ticket.').setMinLength(1).setMaxLength(45).setRequired(true))
       .addRoleOption((option) => option.setName('access-role').setDescription('Role allowed to view and participate in these roleplay tickets.').setRequired(true))
       .addStringOption((option) => option.setName('button-name').setDescription('Text displayed on the ticket button.').setMinLength(1).setMaxLength(80)))
     .addSubcommand((subcommand) => subcommand

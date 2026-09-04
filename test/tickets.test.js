@@ -15,6 +15,7 @@ test('ticket command exposes customizable panel and destination options', () => 
     'ticket-category',
     'name',
     'description',
+    'question',
     'access-role',
     'button-name',
   ]);
@@ -69,6 +70,7 @@ test('a ticket button creates a private channel in its configured category', asy
     'ticket-category': category,
     name: 'Support',
     description: 'Open a private roleplay ticket.',
+    question: 'What is this roleplay ticket about?',
     'button-name': 'Open RP Ticket',
     'access-role': { id: '777777777777777777' },
   };
@@ -98,6 +100,7 @@ test('a ticket button creates a private channel in its configured category', asy
   let modal;
   await handlers[0]({
     customId: `ticket:open:${panelId}`,
+    guildId: '111111111111111111',
     user: { id: '888888888888888888' },
     inGuild: () => true,
     isChatInputCommand: () => false,
@@ -106,7 +109,7 @@ test('a ticket button creates a private channel in its configured category', asy
     showModal: async (value) => { modal = value; },
   });
   assert.equal(modal.data.custom_id, `ticket:create:${panelId}`);
-  assert.match(modal.components[0].components[0].data.label, /roleplay ticket/i);
+  assert.equal(modal.components[0].components[0].data.label, 'What is this roleplay ticket about?');
 
   let channelOptions;
   let welcomePayload;

@@ -34,6 +34,7 @@ export class TicketStore {
       this.panels = parsed.panels.map((panel) => ({
         ...panel,
         accessRoleIds: panel.accessRoleIds ?? panel.staffRoleIds ?? [],
+        question: panel.question ?? 'Describe this roleplay ticket',
       }));
       this.tickets = parsed.tickets.map((ticket) => ({
         ...ticket,
@@ -168,6 +169,7 @@ async function createTicketPanel(interaction, store) {
     categoryId: category.id,
     name: interaction.options.getString('name', true).trim(),
     description: interaction.options.getString('description', true).trim(),
+    question: interaction.options.getString('question', true).trim(),
     buttonName: interaction.options.getString('button-name')?.trim() || 'Open Ticket',
     accessRoleIds: [accessRole.id],
     createdAt: new Date().toISOString(),
@@ -184,12 +186,14 @@ async function createTicketPanel(interaction, store) {
   await interaction.editReply({ content: `Ticket panel created in <#${panelChannel.id}>. New tickets will be created under **${category.name}**.` });
 }
 
-async function showTicketDescriptionModal(interaction) {
+async function showTicketDescriptionModal(interaction, store) {
   const panelId = interaction.customId.split(':')[2];
+  const panel = await store.getPanel(panelId);
+  if (!panel || panel.guildId !== interaction.guildId) throw new Error('This ticket panel is no longer configured.');
   const description = new TextInputBuilder()
     .setCustomId('description')
-    .setLabel('Describe this roleplay ticket')
-    .setPlaceholder('Explain the scene, request, or roleplay situation…')
+    .setLabel(panel.question)
+    .setPlaceholder('Enter your response…')
     .setStyle(TextInputStyle.Paragraph)
     .setMinLength(1)
     .setMaxLength(2000)
@@ -308,7 +312,7 @@ export function attachTicketHandlers(client, { store, logger = console }) {
         return;
       }
       if (interaction.customId.startsWith('ticket:open:')) {
-        await showTicketDescriptionModal(interaction);
+        await showTicketDescriptionModal(interaction, store);
       } else if (interaction.customId.startsWith('ticket:create:')) {
         const openingKey = `${interaction.customId}:${interaction.user.id}`;
         if (openingTickets.has(openingKey)) {

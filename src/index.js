@@ -42,7 +42,9 @@ attachBotHandlers(client, {
   sessionStore: new ApplicationSessionStore(),
 });
 attachReactionRoleHandlers(client, reactionRoleStore);
-attachTicketHandlers(client, { store: new TicketStore() });
+const ticketStore = new TicketStore();
+await ticketStore.load();
+attachTicketHandlers(client, { store: ticketStore });
 
 client.once('clientReady', (readyClient) => {
   readyClient.user.setActivity(process.env.BOT_ACTIVITY || 'Roleplay Applications', { type: ActivityType.Watching });

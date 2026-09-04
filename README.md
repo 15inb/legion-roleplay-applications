@@ -221,10 +221,10 @@ The create command supports up to five role/emoji pairs, and the panel embed cle
 Create a ticket panel entirely from Discord:
 
 ```text
-/tickets create panel-channel:#roleplay-tickets ticket-category:Active-RP-Tickets name:Roleplay Ticket description:Open a private channel for a roleplay scene or situation. button-name:Open RP Ticket access-role:@GameMaster
+/tickets create panel-channel:#roleplay-tickets ticket-category:Active-RP-Tickets name:Roleplay Ticket description:Open a private channel for a roleplay scene or situation. question:What is this roleplay ticket about? access-role:@GameMaster button-name:Open RP Ticket
 ```
 
-The command lets you choose where the panel is posted, the category where its private tickets are created, the panel name and description, the button label, and the role allowed to participate in tickets from that panel. This role is configured independently from application reviewers.
+The command lets you choose where the panel is posted, the category where its private tickets are created, the panel name and description, the question shown when a ticket is opened, the button label, and the role allowed to participate in tickets from that panel. This role is configured independently from application reviewers. Discord allows up to 45 characters for the custom modal question.
 
 When someone presses the button, the bot opens a modal asking them to describe that particular roleplay ticket. Their description is saved and displayed in the new channel's opening embed. Each user can have one open ticket per panel. Only the ticket opener, the configured roleplay access role, and the bot can see its channel. The welcome embed includes a **Close Ticket** button, and `/tickets close` provides the same confirmation flow. Closing permanently deletes the ticket channel. Panel and ticket state is saved in `data/tickets.json`, so buttons and duplicate-ticket protection continue working after restarts.
 

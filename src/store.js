@@ -54,6 +54,23 @@ export class ApplicationStore {
     return this.records.some((record) => record.guildId === guildId && record.userId === userId && record.status === 'pending');
   }
 
+  async latestDeniedForUser(guildId, userId) {
+    await this.load();
+    return [...this.records].reverse().find((record) => record.guildId === guildId
+      && record.userId === userId && record.status === 'denied' && record.decidedAt) ?? null;
+  }
+
+  async pendingForChannel(guildId, channelId) {
+    await this.load();
+    return [...this.records].reverse().find((record) => record.guildId === guildId
+      && record.reviewChannelId === channelId && record.status === 'pending') ?? null;
+  }
+
+  async latestPendingForUser(userId) {
+    await this.load();
+    return [...this.records].reverse().find((record) => record.userId === userId && record.status === 'pending') ?? null;
+  }
+
   async decide(id, decision) {
     await this.load();
     const record = this.records.find((item) => item.id === id);

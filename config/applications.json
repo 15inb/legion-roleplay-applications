@@ -1,98 +1,79 @@
 {
-  "reviewerRoleIds": ["PUT_STAFF_ROLE_ID_HERE"],
+  "reviewerRoleIds": [
+    "PUT_STAFF_ROLE_ID_HERE"
+  ],
+  "applicationCategoryId": "PUT_APPLICATION_CATEGORY_ID_HERE",
+  "transcriptChannelId": "PUT_TRANSCRIPT_CHANNEL_ID_HERE",
   "allowMultiplePendingApplications": false,
   "panel": {
-    "title": "Roleplay Applications",
-    "description": "Apply for an available roleplay position. Your answers are only shared with the review team.",
-    "color": "#5865F2"
+    "title": "Legionnaire Application",
+    "description": "Apply to join the Imperial Legion. Your answers are only shared with the review team.",
+    "color": "#8B1A1A"
   },
   "positions": [
     {
-      "id": "law-enforcement",
-      "name": "Law Enforcement",
-      "description": "Apply for a law-enforcement position.",
-      "roleId": "PUT_LAW_ENFORCEMENT_ROLE_ID_HERE",
-      "reviewChannelId": "PUT_REVIEW_CHANNEL_ID_HERE",
+      "id": "legionnaire-application",
+      "name": "Legionnaire Application",
+      "description": "Apply to join the Imperial Legion.",
+      "grantRoleIds": [
+        "PUT_LEGIONNAIRE_ROLE_ID_HERE"
+      ],
+      "removeRoleIds": [],
       "questions": [
         {
-          "id": "character-name",
-          "label": "What is your character's name?",
-          "style": "short",
-          "required": true,
-          "maxLength": 100,
-          "placeholder": "First and last name"
-        },
-        {
-          "id": "age",
-          "label": "How old are you?",
-          "style": "short",
-          "required": true,
-          "minLength": 1,
-          "maxLength": 3
-        },
-        {
-          "id": "experience",
-          "label": "Describe your roleplay experience.",
+          "id": "join-reason",
+          "label": "Why do you want to join the Imperial Legion?",
           "style": "paragraph",
           "required": true,
-          "minLength": 30,
-          "maxLength": 1000
-        },
-        {
-          "id": "motivation",
-          "label": "Why do you want this position?",
-          "style": "paragraph",
-          "required": true,
-          "minLength": 50,
           "maxLength": 1500
         },
         {
-          "id": "scenario",
-          "label": "How would you handle a tense scene?",
+          "id": "good-legionnaire",
+          "label": "What do you think makes someone a good Legionnaire?",
           "style": "paragraph",
           "required": true,
-          "minLength": 50,
-          "maxLength": 1500,
-          "placeholder": "Explain how you would keep the scene fair and enjoyable."
+          "maxLength": 1500
         },
         {
-          "id": "availability",
-          "label": "What is your usual availability?",
+          "id": "disagree-with-order",
+          "label": "If a superior gives you an order you disagree with, what do you do?",
           "style": "paragraph",
           "required": true,
-          "maxLength": 500,
-          "placeholder": "Include your time zone."
-        }
-      ]
-    },
-    {
-      "id": "fire-ems",
-      "name": "Fire & EMS",
-      "description": "Apply for a Fire and EMS position.",
-      "roleId": "PUT_FIRE_EMS_ROLE_ID_HERE",
-      "reviewChannelId": "PUT_REVIEW_CHANNEL_ID_HERE",
-      "questions": [
-        {
-          "id": "character-name",
-          "label": "What is your character's name?",
-          "style": "short",
-          "required": true,
-          "maxLength": 100
+          "maxLength": 1500
         },
         {
-          "id": "experience",
-          "label": "Describe your medical roleplay experience.",
+          "id": "civilian-trouble",
+          "label": "If another Legionnaire starts causing trouble with a civilian, what do you do?",
           "style": "paragraph",
           "required": true,
-          "minLength": 30,
-          "maxLength": 1200
+          "maxLength": 1500
         },
         {
-          "id": "motivation",
-          "label": "Why do you want this position?",
+          "id": "insulted-on-duty",
+          "label": "If someone insults you while you're on duty, how would you handle it?",
           "style": "paragraph",
           "required": true,
-          "minLength": 50,
+          "maxLength": 1500
+        },
+        {
+          "id": "mistake-after-order",
+          "label": "If you make a mistake while following an order, what do you do afterward?",
+          "style": "paragraph",
+          "required": true,
+          "maxLength": 1500
+        },
+        {
+          "id": "orders-or-judgment",
+          "label": "What is more important: following orders or doing what you personally think is right? Why?",
+          "style": "paragraph",
+          "required": true,
+          "maxLength": 1500
+        },
+        {
+          "id": "acceptance-reason",
+          "label": "Why should we accept you into the Legion?",
+          "style": "paragraph",
+          "required": true,
           "maxLength": 1500
         }
       ]

@@ -749,13 +749,14 @@ export async function applyApprovalRoleChanges(member, record, auditReason, save
   const newlyRemoved = rolesToRemove.filter((roleId) => member.roles.cache.has(roleId));
   let updated;
   try {
-    if (rolesToGrant.length) await member.roles.add(rolesToGrant, auditReason);
-    if (rolesToRemove.length) await member.roles.remove(rolesToRemove, auditReason);
+    // Array operations replace the full role list using a potentially stale cache.
+    for (const roleId of rolesToGrant) await member.roles.add(roleId, auditReason);
+    for (const roleId of rolesToRemove) await member.roles.remove(roleId, auditReason);
     updated = await saveDecision();
     if (!updated) throw new Error('The application was already decided before the approval could be saved.');
   } catch (error) {
-    if (newlyGranted.length) await member.roles.remove(newlyGranted, `Rollback failed approval ${record.id}`).catch((rollbackError) => logger.error('Could not roll back granted roles:', rollbackError));
-    if (newlyRemoved.length) await member.roles.add(newlyRemoved, `Rollback failed approval ${record.id}`).catch((rollbackError) => logger.error('Could not restore removed roles:', rollbackError));
+    for (const roleId of newlyGranted) await member.roles.remove(roleId, `Rollback failed approval ${record.id}`).catch((rollbackError) => logger.error('Could not roll back granted roles:', rollbackError));
+    for (const roleId of newlyRemoved) await member.roles.add(roleId, `Rollback failed approval ${record.id}`).catch((rollbackError) => logger.error('Could not restore removed roles:', rollbackError));
     throw error;
   }
   return { updated, rolesToGrant, rolesToRemove };

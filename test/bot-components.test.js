@@ -26,9 +26,36 @@ test('approval can grant and remove multiple roles in one decision', async () =>
   const saved = { ...record, status: 'approved' };
   const result = await applyApprovalRoleChanges(member, record, 'Approved', async () => saved);
 
-  assert.deepEqual(added, [['grant-1', 'grant-2']]);
-  assert.deepEqual(removed, [['remove-1', 'remove-2']]);
+  assert.deepEqual(added, ['grant-1', 'grant-2']);
+  assert.deepEqual(removed, ['remove-1', 'remove-2']);
   assert.equal(result.updated, saved);
+});
+
+test('approval preserves granted and unrelated roles when the member cache is stale', async () => {
+  const cached = new Set(['old-role', 'existing-role']);
+  let actual = new Set(cached);
+  const member = { roles: {
+    cache: cached,
+    add: async (roles) => {
+      if (Array.isArray(roles)) actual = new Set([...cached, ...roles]);
+      else actual.add(roles);
+    },
+    remove: async (roles) => {
+      if (Array.isArray(roles)) actual = new Set([...cached].filter((id) => !roles.includes(id)));
+      else actual.delete(roles);
+    },
+  } };
+  const record = { id: 'STALE', grantRoleIds: ['new-1', 'new-2'], removeRoleIds: ['old-role'] };
+  await applyApprovalRoleChanges(member, record, 'Approve', async () => ({ status: 'approved' }));
+  assert.deepEqual([...actual].sort(), ['existing-role', 'new-1', 'new-2']);
+
+  // A failed decision save restores the original roles without replacing the list.
+  actual = new Set(cached);
+  await assert.rejects(applyApprovalRoleChanges(member, record, 'Approve', async () => {
+    actual.add('concurrent-role');
+    throw new Error('Disk unavailable');
+  }), /Disk unavailable/);
+  assert.deepEqual([...actual].sort(), ['concurrent-role', 'existing-role', 'old-role']);
 });
 
 test('Discord transcript pages stay within embed limits and escape user markdown', () => {
